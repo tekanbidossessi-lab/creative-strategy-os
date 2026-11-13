@@ -1,0 +1,155 @@
+# Engines per task and per mode. ws.py reads this file; references/modes.md explains the choices.
+# Two separate choices:
+#   mode      = which tools do the research work: free | hybrid | paid
+#   capacity  = where it runs and how much Claude usage: machine (own-pc | vps) and claude (pro | max)
+# A workspace can override any task in workspace.yaml -> engines: {task: engine}.
+# Measured 26-27/10/2026 on an 8-core Windows PC: yt-dlp downloads TikTok, Instagram and Ad Library
+# videos with their metadata without login; local Whisper "small" transcribes ~3.5x real time.
+
+tasks:
+  discover:   "Trouver les références (Bibliothèque publicitaire, TikTok, Instagram)"
+  download:   "Télécharger les références choisies et leurs chiffres"
+  transcribe: "Transcrire mot pour mot les références parlées"
+  analyse:    "Lire plan par plan les références qui servent de squelette"
+  documents:  "Sortir les livrables en Word et PDF"
+  results:    "Récupérer les résultats des pubs"
+
+modes:
+  free:
+    discover: browser
+    download: ytdlp
+    transcribe: whisper
+    analyse: gemini      # with a free Gemini key (AI Studio, no card); without it, frames read by Claude
+    documents: auto
+    results: export
+  hybrid:
+    discover: apify
+    download: ytdlp
+    transcribe: whisper
+    analyse: gemini
+    documents: auto
+    results: export
+  paid:
+    discover: apify
+    download: ytdlp
+    transcribe: whisper
+    analyse: gemini
+    documents: auto
+    results: export
+
+# A task listed here for a mode runs on an optional extra: without it the fallback is the normal way, not a degraded one.
+optional:
+  free: [analyse]
+
+# Tiers, said plainly: hybrid uses the free allowances of Apify and Gemini and pays only past them;
+# paid takes the paid tiers (Apify Starter, Gemini paid) so nothing waits on a quota.
+tiers:
+  free: "Aucun coût en plus de l'abonnement Claude ; une clé Gemini gratuite (facultative) analyse toutes les références sans entamer l'usage Claude"
+  hybrid: "0 $ tant que les crédits gratuits d'Apify (5 $ par mois) et de Gemini suffisent ; ensuite Apify Starter 19 $ par mois"
+  paid: "Apify Starter (19 $ par mois) et Gemini au niveau payant (quelques centimes par vidéo)"
+
+capacity:
+  machine:
+    own-pc: {label: "L'ordinateur de l'utilisateur", cost: "0", warn_ram_mb: 3000}
+    vps: {label: "VPS Windows en bureau à distance (InterServer, 4 slices : 2 cœurs, 8 Go)", cost: "20 $ par mois"}
+  claude:
+    pro: {label: "Claude Pro", cost: "abonnement Pro"}
+    max: {label: "Claude Max : plus d'usage, plusieurs produits en parallèle", cost: "abonnement Max"}
+
+# When the engine of a task cannot run, ws.py doctor records the working fallback as the
+# effective engine of that task (state.yaml -> effective_engines) and the start page shows it.
+fallbacks:
+  discover: {apify: [browser]}
+  download: {ytdlp: [browser]}
+  transcribe: {whisper: []}
+  analyse: {gemini: [frames]}
+
+engines:
+  browser:
+    label: "Navigateur piloté par Claude (Claude in Chrome, ou le navigateur intégré de l'app Claude)"
+    implemented: true
+    needs: {manual: "Claude in Chrome connecté, et ce Chrome connecté à Facebook et TikTok pour les recherches"}
+  apify:
+    label: "Apify : recherche structurée dans la Bibliothèque publicitaire, TikTok et Instagram"
+    implemented: true
+    field_tested: false     # entrées vérifiées sur le schéma public des acteurs (28/10/2026), pas encore lancé avec une vraie clé
+    needs: {env: [APIFY_TOKEN]}
+  ytdlp:
+    label: "yt-dlp : téléchargement gratuit, sans connexion, avec vues, likes et texte de la pub"
+    implemented: true
+    needs: {python: [yt_dlp], python_recommended: [3, 11], ffmpeg: true}
+  whisper:
+    label: "faster-whisper : transcription mot pour mot sur cet ordinateur"
+    implemented: true
+    needs: {python: [faster_whisper, av], disk_mb: 600, free_ram_mb: 1200}
+  gemini:
+    label: "Gemini API : lecture plan par plan des vidéos squelettes"
+    implemented: true
+    field_tested: false     # pas encore lancé avec une vraie clé sur cet ordinateur
+    needs: {env: [GEMINI_API_KEY], python: [google.genai]}
+  frames:
+    label: "Images clés et planches contact, lues par Claude"
+    implemented: true
+    needs: {python: [av, PIL]}
+  auto:
+    label: "Word s'il est installé, sinon LibreOffice, sinon .docx seul"
+    implemented: true
+    needs: {python: [docx, pymupdf, openpyxl]}
+  export:
+    label: "Export du Gestionnaire avec les colonnes « Lecture créa » (references/results.md), captures en secours"
+    implemented: true
+    needs: {manual: "modèle de colonnes « Lecture créa » enregistré dans le Gestionnaire de publicités"}
+
+# The steps of the flywheel, in order. available: false = the skill is not built yet; interim says
+# how to do the step today with the existing tools.
+steps:
+  - id: intake
+    label: "Fiche produit et compte"
+    skill: cs-intake
+    available: true
+    interim: "remplir product.yaml depuis la page produit en ligne et workspace.yaml avec le client ; comparer l'identifiant du compte pub avec celui de l'export"
+  - id: offer
+    label: "Offre et page produit"
+    skill: cs-offer
+    available: true
+    interim: "comparer la page du client à celles des concurrents (library/competitors.yaml : prix, lots, garantie, promesse, preuves, structure), puis auditer la page : que vendez-vous, en quoi ça m'aide, pourquoi vous ; bénéfices en transformation ; section problème-solution ; même offre que les pubs"
+  - id: research
+    label: "Références"
+    skill: cs-research
+    available: true
+    interim: "pca-plan-attaque, references/pipeline.md étapes 2 à 7, sur le dossier References/ du workspace ; téléchargements avec yt-dlp ; pour chaque concurrent qui revient dans les pubs gagnantes, ouvrir la page produit où mène sa pub, la copier dans library/competitors/CO##_<nom>/ et la résumer dans library/competitors.yaml (code réservé avec ws.py code <dossier> CO)"
+  - id: strategy
+    label: "Avatars et système de créas"
+    skill: cs-strategy
+    available: true
+    interim: "pca-plan-attaque (avatars, classement, système des dix). Hors Accélérateur : build avec --force, mise en page Momentum"
+  - id: briefs
+    label: "Briefs"
+    skill: cs-briefs
+    available: true
+    interim: "briefs de pca-plan-attaque ; pca-guide-montage pour les montages en voix off"
+  - id: production
+    label: "Production des créas"
+    skill: cs-briefs
+    available: true
+    interim: "une ligne par créa dans cycles/<cycle>/ads.yaml : qui la produit, pour quand ; consignes au monteur notées avec ws.py log"
+  - id: review
+    label: "Contrôle qualité"
+    skill: cs-review
+    available: true
+    interim: "contrôler chaque créa contre son brief : accroche écrite, sous-titres simples, premier plan, fin sur le prix et le paiement ; noter le verdict dans ads.yaml"
+  - id: launch
+    label: "Lancement"
+    skill: cs-launch
+    available: true
+    interim: "fiche de lancement : ensembles et noms (references/naming.md), réglages, un texte publicitaire commun construit comme une mini page produit sur la meilleure pub du marché, checklist, 7 premiers jours"
+  - id: read
+    label: "Lecture des résultats"
+    skill: cs-read
+    available: true
+    interim: "lire l'export « Lecture créa » pub par pub (references/results.md) et noter les chiffres dans ads.yaml"
+  - id: iterate
+    label: "Variations"
+    skill: cs-iterate
+    available: true
+    interim: "module « Faire des variations » du mini-cours ; ajouter les briques gagnantes à library/blocks.yaml"
