@@ -1303,7 +1303,7 @@ def env_state(name):
     v = os.environ.get(name)
     if v:
         return "process", v
-    if WIN:
+    if WIN and not os.environ.get("CSOS_NO_REGISTRY_KEYS"):   # tests: only the process environment counts
         try:
             import winreg
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:

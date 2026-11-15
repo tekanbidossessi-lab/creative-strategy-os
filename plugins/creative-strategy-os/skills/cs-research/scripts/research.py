@@ -1003,6 +1003,25 @@ def gemini_model(ws):
     the stronger Pro. GEMINI_MODEL overrides both."""
     return os.environ.get('GEMINI_MODEL') or ('gemini-2.5-pro' if str(ws.get('mode')) == 'paid' else 'gemini-2.5-flash')
 
+class GeminiDayQuota(Exception):
+    """The free tier's daily quota of a model is used up (it comes back at midnight, Pacific time = 08:00 GMT)."""
+GEMINI_CHAIN_FREE = ['gemini-2.5-flash', 'gemini-2.5-flash-lite']
+LONG_VIDEO_S = 180
+
+def video_seconds(path):
+    try:
+        import av
+        with av.open(str(path)) as c:
+            return float(c.duration or 0) / 1000000
+    except Exception:
+        return 0.0
+
+def quota_kind(e):
+    t = str(e)
+    if '429' not in t and 'RESOURCE_EXHAUSTED' not in t:
+        return None
+    return 'day' if re.search('PerDay|per day|daily', t, re.I) else 'minute'
+
 def gemini_analyse(path, prompt, model=None):
     key = os.environ.get('GEMINI_API_KEY') or W.env_state('GEMINI_API_KEY')[1]
     if not key:
@@ -1022,12 +1041,22 @@ def gemini_analyse(path, prompt, model=None):
             f = client.files.get(name=f.name)
         if 'FAILED' in str(getattr(getattr(f, 'state', None), 'name', getattr(f, 'state', ''))):
             raise RuntimeError("Gemini n'a pas pu lire le fichier")
-        for attempt in (1, 2):
+        cfg = None
+        try:
+            if video_seconds(path) > LONG_VIDEO_S:
+                from google.genai import types as _t
+                cfg = _t.GenerateContentConfig(media_resolution=_t.MediaResolution.MEDIA_RESOLUTION_LOW)
+        except Exception:
+            cfg = None
+        for attempt in (1, 2, 3):
             try:
-                resp = client.models.generate_content(model=model or GEMINI_MODEL, contents=[f, prompt])
+                resp = client.models.generate_content(model=model or GEMINI_MODEL, contents=[f, prompt], config=cfg)
                 return resp.text or ''
             except Exception as e:
-                if attempt == 1 and ('429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e)):
+                k = quota_kind(e)
+                if k == 'day':
+                    raise GeminiDayQuota(str(e)[:200])
+                if k == 'minute' and attempt < 3:
                     print('    quota de la minute atteint, une minute de pause…')
                     time.sleep(62)
                     continue
@@ -1055,6 +1084,8 @@ def cmd_analyse(a):
     if not codes:
         raise WsError('donne les codes à analyser, ou --all')
     model = gemini_model(ws)
+    chain = [model] + [m for m in GEMINI_CHAIN_FREE if m != model] if not os.environ.get('GEMINI_MODEL') else [model]
+    waiting = []
     for code in codes:
         r = ref_by_code(data['references'], code)
         if not r:
@@ -1076,8 +1107,23 @@ def cmd_analyse(a):
                 r.update({'status': 'seen_online', 'analysis_engine': 'online'})
             print(f'  {code} : réponse enregistrée ({len(text)} signes)' + ('' if complete(text) else ' — PARTIE 7 absente : réponse coupée ?'))
         elif engine == 'gemini':
+            if not chain:
+                waiting.append(code)
+                continue
             try:
-                text = gemini_analyse(src, prompt_for(P, r), model)
+                while True:
+                    try:
+                        model = chain[0]
+                        text = gemini_analyse(src, prompt_for(P, r), model)
+                        break
+                    except GeminiDayQuota:
+                        print(f'    {chain[0]} : quota du jour épuisé' + (f', je passe à {chain[1]}' if len(chain) > 1 else ''))
+                        chain.pop(0)
+                        if not chain:
+                            raise
+            except GeminiDayQuota:
+                waiting.append(code)
+                continue
             except WsError:
                 raise
             except Exception as e:
@@ -1113,6 +1159,9 @@ def cmd_analyse(a):
             r.update({'analysis': f'Analyses/{dest.name}', 'analysis_engine': 'frames', 'skeleton': True, 'analysis_complete': complete(read_text(dest)), 'frames': sorted(set((r.get('frames') or []) + stamps))})
             print(f"  {code} : {len(stamps)} image(s) clé(s) + le guide dans Analyses/{dest.name} ; regarde les images et écris l'analyse à la place du guide")
         save_refs(F['refs'], data)
+    if waiting:
+        print(f"\n{len(waiting)} référence(s) attendent : le quota gratuit du jour est épuisé sur tous les modèles ({', '.join(waiting[:12])}{('…' if len(waiting) > 12 else '')}). Il revient à minuit heure du Pacifique (08:00 GMT, 09:00 au Bénin) : relance « research.py analyse <dossier> --all » demain, il reprend où il s'est arrêté. Si c'est urgent : « --engine frames » sur celles qui comptent (Claude lit les images clés), ou « --engine pack » pour AI Studio dans le navigateur, qui a son propre quota.")
+        journal(P, f"Analyses Gemini : {len(waiting)} en attente du quota de demain ({', '.join(waiting)})")
     journal(P, f"Analyses ({('réponse' if a.answer else engine)}) : {', '.join((c.upper() for c in a.codes))}")
     refresh(P, ws, state)
 

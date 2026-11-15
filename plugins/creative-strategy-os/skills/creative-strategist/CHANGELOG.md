@@ -1,5 +1,9 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.4.2 — 2026-11-15
+
+- Gemini gratuit : quand le quota du jour d'un modèle est épuisé, l'analyse passe au modèle suivant (2.5 Flash puis 2.5 Flash-Lite, chacun son quota) ; quand tous le sont, les références restantes attendent le lendemain (analyse --all reprend) avec les solutions immédiates (images clés, AI Studio). Vidéos de plus de 3 minutes envoyées en basse résolution (environ 3 fois moins de jetons). Clé Gemini testée en vrai.
+
 ## 1.4.1 — 2026-11-15
 
 - Recherche : chaque vendeur trouvé (un site avec 3 pubs ou plus) entre seul dans library/sellers.yaml et ses recherches par site et par nom, tous pays, sont ajoutées au plan une fois (research.py rank).

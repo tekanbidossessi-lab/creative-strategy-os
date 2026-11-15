@@ -85,7 +85,7 @@ engines:
   gemini:
     label: "Gemini API : lecture plan par plan des vidéos squelettes"
     implemented: true
-    field_tested: false     # pas encore lancé avec une vraie clé sur cet ordinateur
+    field_tested: true      # 15/11/2026 : vraie clé gratuite, AL01 analysée (gemini-2.5-flash)
     needs: {env: [GEMINI_API_KEY], python: [google.genai]}
   frames:
     label: "Images clés et planches contact, lues par Claude"
