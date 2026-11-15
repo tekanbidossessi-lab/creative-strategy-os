@@ -68,6 +68,24 @@ def device_id():
 
 # ---------- transport ----------
 def call(path, payload):
+    """The free server sleeps after 15 minutes; while it wakes, Render answers 502/503/504 for up to a minute. Audit
+    15/11/2026: retry three times, 20 s apart, instead of failing the buyer's first command."""
+    import time
+    for attempt in range(4):
+        try:
+            return _call(path, payload)
+        except _Waking:
+            if attempt == 0:
+                print("Le serveur de licence se réveille (jusqu'à une minute la première fois)…", flush=True)
+            time.sleep(20)
+    raise LicenceError("le serveur de licence ne s'est pas réveillé : relance la commande dans une minute.")
+
+
+class _Waking(Exception):
+    pass
+
+
+def _call(path, payload):
     body = gzip.compress(json.dumps(payload).encode("utf-8"), 6)   # text squeezes 5 to 10 times: light on mobile data
     req = urllib.request.Request(server_url() + path, data=body, headers={
         "Content-Type": "application/json", "Content-Encoding": "gzip", "Accept-Encoding": "gzip"})
@@ -78,6 +96,8 @@ def call(path, payload):
                 raw = gzip.decompress(raw)
             return json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as e:
+        if e.code in (502, 503, 504):
+            raise _Waking()
         try:
             raw = e.read()
             if e.headers.get("Content-Encoding") == "gzip":

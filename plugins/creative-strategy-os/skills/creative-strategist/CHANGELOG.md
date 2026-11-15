@@ -1,5 +1,16 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.4.4 — 2026-11-15
+
+- Petit budget : sous 105 $ par semaine pour un produit, 2 ou 3 idées avec 2 ou 3 accroches chacune (un ensemble = une idée, le même corps, seule l'ouverture change) ; la vérification de la stratégie le contrôle.
+- Notes sur 10 : rétention 10 % = 7/10, 15 % = 8/10, 40 % = 10/10 (parfait) ; accroche 37 % = 6/10, 45 % = 7/10, 80 % = 10/10, dans la lecture et le classement.
+- La gagnante au cas par cas : plus de nombre de ventes fixé. Rentable d'abord (coût sous la cible, marge après la pub), puis pesée sur les ventes, la marge, l'accroche, la rétention, le CTR et le CPM ; « à confirmer » sous 5 ventes ; « prometteuse » sans assez de preuves. Classement du test : le plus de ventes pour le moins d'argent.
+- Le registre des gagnants (deliverables/GAGNANTS.md, read.py winners) : chaque gagnante décomposée sur ADN (avatar · désir · niveau de conscience) × angle × format, la variable gagnante, chaque élément classé sur tous les cycles (prouvé, prometteur, mitigé, à éviter), ce que les variations ont prouvé, la prochaine variable à changer ; cs-iterate part de là.
+
+## 1.4.3 — 2026-11-15
+
+- Audit du 15/11 : le budget écrit en FCFA, GNF, naira, cedi, euros ou dirhams est lu (avant, la stratégie retombait sur 10 créas quel que soit le budget) ; la fiche de lancement prévient quand le budget par pub ne permet pas de juger en une semaine ; le client de licence attend le réveil du serveur gratuit au lieu d'échouer ; le guide explique l'installation avec une licence (plugin, clé, outils).
+
 ## 1.4.2 — 2026-11-15
 
 - Gemini gratuit : quand le quota du jour d'un modèle est épuisé, l'analyse passe au modèle suivant (2.5 Flash puis 2.5 Flash-Lite, chacun son quota) ; quand tous le sont, les références restantes attendent le lendemain (analyse --all reprend) avec les solutions immédiates (images clés, AI Studio). Vidéos de plus de 3 minutes envoyées en basse résolution (environ 3 fois moins de jetons). Clé Gemini testée en vrai.

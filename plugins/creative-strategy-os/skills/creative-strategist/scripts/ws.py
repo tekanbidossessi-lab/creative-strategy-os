@@ -780,8 +780,9 @@ HANDOFF = {
                    "live, donne-moi les inscrits, les présents et les ventes. Tu me dis le jour où elle part ?",
     },
     "read": {
-        "*": "Tu sais quoi couper, quoi garder et pourquoi. Fais ces gestes dans le Gestionnaire aujourd'hui. La "
-             "suite : les variations des gagnantes, le prochain lot de pubs à produire. Je les prépare ?",
+        "*": "Tu sais quoi couper, quoi garder et pourquoi, et le registre des gagnants dit quelle part de ta formule a "
+             "gagné. Fais ces gestes dans le Gestionnaire aujourd'hui. La suite : les variations des gagnantes, le "
+             "prochain lot de pubs à produire. Je les prépare ?",
         "webinar": "Tu sais quoi couper, quoi garder et pourquoi. Fais ces gestes dans le Gestionnaire aujourd'hui. "
                    "La suite : les variations des gagnantes pour le prochain live, et les pubs pour ceux qui se sont "
                    "inscrits sans venir. Je les prépare ?",

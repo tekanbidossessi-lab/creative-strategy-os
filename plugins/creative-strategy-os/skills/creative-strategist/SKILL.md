@@ -227,6 +227,6 @@ research` when the references themselves are tired).
 | `scripts/thresholds.yaml` | Richie's reading numbers (shared: cs-launch, cs-read, cs-iterate), overridable per workspace |
 | `scripts/suite.py`, `VERSION`, `CHANGELOG.md` | Versions and updates: version, test, pack (new version + zip), install (backup, tests, rollback on failure), rollback |
 | `references/team.md` | Team mode: `ws.py team`, roles, `CS_USER` in the journal, sharing the folder, the daily rhythm |
-| `scripts/setup/setup_windows.ps1`, `setup_mac.sh` | Prepare a Windows PC (or an InterServer VPS) or a Mac: Python 3.11+, the packages, Chrome, LibreOffice when Word is absent; `-Check` / `--check` only reports, Claude in Chrome and the free Gemini key included |
+| `scripts/setup/setup_windows.ps1`, `setup_mac.sh` (« installe les outils » : run the one of this OS from this skill's own folder, plugin or not) | Prepare a Windows PC (or an InterServer VPS) or a Mac: Python 3.11+, the packages, Chrome, LibreOffice when Word is absent; `-Check` / `--check` only reports, Claude in Chrome and the free Gemini key included |
 | `requirements.txt` | Python packages (Python 3.11+) |
 | `tests/test_ws.py` | Acceptance tests: `python tests/test_ws.py` |

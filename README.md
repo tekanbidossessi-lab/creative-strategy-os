@@ -5,7 +5,7 @@ références qui ont déjà vendu, avatars, système de créatives, briefs prêt
 lecture des résultats et variations.
 
 **Ce plugin demande une licence.** Elle s'achète sur la boutique de Richie Tekan (Chariow). Une licence vaut pour
-2 ordinateurs, pendant la durée de ton abonnement.
+2 ordinateurs, à vie : un seul paiement, pas d'abonnement, les mises à jour comprises.
 
 ## Installer (une seule fois)
 

@@ -1,6 +1,6 @@
 # Creative Strategy OS — le guide d'utilisation
 
-*Version 1.4.2 · pour Windows et Mac*
+*Version 1.4.4 · pour Windows et Mac*
 
 ## Ce que fait Creative Strategy OS
 
@@ -53,21 +53,33 @@ Ensuite, chaque fois que tu reviens, tu écris « On continue ». Claude reprend
 
 ## Installer (une seule fois)
 
+### Tu as acheté une licence (le cas le plus courant)
+
+1. **L'app Claude.** Télécharge-la sur claude.ai/download, installe-la, connecte-toi et ouvre l'onglet **Code** une fois.
+2. **Le plugin.** Dans l'app : Paramètres, Plugins, « Ajouter une marketplace », colle `tekanbidossessi-lab/creative-strategy-os`, puis installe **creative-strategy-os**. Ferme et rouvre l'app.
+3. **Ta clé.** Crée un dossier pour ton travail, ouvre-le dans l'onglet Code et écris : « je veux des pubs qui vendent pour mon produit ». Claude te demande ta clé de licence (dans l'e-mail de Chariow) : colle-la. Elle vaut pour 2 ordinateurs, à vie.
+4. **Les outils.** Écris : « installe les outils de Creative Strategy OS ». Claude lance le script d'installation du plugin (Python, Chrome, LibreOffice si tu n'as pas Word, les outils de la suite), comme l'étape 4 ci-dessous, puis vérifie tout avec toi.
+5. **Claude dans Chrome** et **la clé Gemini gratuite** : étapes 5 et 6 ci-dessous.
+
+Les mises à jour arrivent toutes seules (ou bouton « mettre à jour » des plugins) : rien à réinstaller.
+
+### Tu as reçu le fichier zip (installation à la main)
+
 Fais les étapes dans l'ordre. Ne saute pas l'étape 3 : la suite doit atterrir dans le bon dossier, sinon Claude ne la voit pas.
 
 ### Sur Windows
 
 **1. L'app Claude.** Télécharge-la sur claude.ai/download, installe-la et connecte-toi avec ton compte Claude. Ouvre l'onglet **Code** une première fois pour vérifier qu'il s'affiche. Puis ferme l'app.
 
-**2. Le fichier de la suite.** Tu as reçu `creative-strategy-os-1.4.2.zip`. Laisse-le dans ton dossier **Téléchargements**. Ne l'ouvre pas en double-cliquant.
+**2. Le fichier de la suite.** Tu as reçu `creative-strategy-os-1.4.4.zip`. Laisse-le dans ton dossier **Téléchargements**. Ne l'ouvre pas en double-cliquant.
 
 **3. Mettre la suite à sa place.** Ouvre le menu Démarrer, tape **PowerShell** et ouvre « Windows PowerShell ». Copie cette ligne, colle-la avec un clic droit, puis appuie sur Entrée :
 
 ```
-Expand-Archive -Path "$env:USERPROFILE\Downloads\creative-strategy-os-1.4.2.zip" -DestinationPath "$env:USERPROFILE\.claude\skills" -Force
+Expand-Archive -Path "$env:USERPROFILE\Downloads\creative-strategy-os-1.4.4.zip" -DestinationPath "$env:USERPROFILE\.claude\skills" -Force
 ```
 
-Vérifie le résultat : ouvre l'Explorateur de fichiers, colle `%USERPROFILE%\.claude\skills` dans la barre d'adresse et appuie sur Entrée. Tu dois voir **dix dossiers** (creative-strategist, cs-briefs, cs-intake, cs-iterate, cs-launch, cs-offer, cs-read, cs-research, cs-review, cs-strategy) et un fichier `manifest.json`. Si tu vois un seul dossier nommé `creative-strategy-os-1.4.2`, c'est qu'il a été décompressé autrement : ouvre-le, sélectionne tout ce qu'il contient, et déplace-le d'un niveau, directement dans `skills`.
+Vérifie le résultat : ouvre l'Explorateur de fichiers, colle `%USERPROFILE%\.claude\skills` dans la barre d'adresse et appuie sur Entrée. Tu dois voir **dix dossiers** (creative-strategist, cs-briefs, cs-intake, cs-iterate, cs-launch, cs-offer, cs-read, cs-research, cs-review, cs-strategy) et un fichier `manifest.json`. Si tu vois un seul dossier nommé `creative-strategy-os-1.4.4`, c'est qu'il a été décompressé autrement : ouvre-le, sélectionne tout ce qu'il contient, et déplace-le d'un niveau, directement dans `skills`.
 
 **4. Les outils.** Dans la même fenêtre PowerShell, colle cette ligne et appuie sur Entrée :
 
@@ -90,7 +102,7 @@ Si tu lis « Python n'est pas encore visible », c'est normal la première fois.
 **2 et 3. Mettre la suite à sa place.** Laisse le zip dans **Téléchargements**. Ouvre le Terminal (Cmd + Espace, tape « Terminal »), colle cette ligne et appuie sur Entrée :
 
 ```
-mkdir -p ~/.claude/skills && unzip -o ~/Downloads/creative-strategy-os-1.4.2.zip -d ~/.claude/skills
+mkdir -p ~/.claude/skills && unzip -o ~/Downloads/creative-strategy-os-1.4.4.zip -d ~/.claude/skills
 ```
 
 Pour vérifier, colle `open ~/.claude/skills` dans le Terminal : tu dois voir les dix dossiers et `manifest.json`.
@@ -145,7 +157,7 @@ Dans le parcours complet, tout ce que Claude produit pendant les étapes 1 à 5 
 | La production | PRODUCTION (qui fait quoi, pour quand, ce qui est livré) |
 | Le contrôle | CONTROLE (chaque vidéo : bonne à lancer, à corriger ou à refaire) |
 | Le lancement | LANCEMENT (la campagne, les noms, les 7 premiers jours) |
-| La lecture | LECTURE (le verdict de chaque pub et ce qu'il faut faire) |
+| La lecture | LECTURE (le verdict de chaque pub et ce qu'il faut faire) et GAGNANTS (le registre des gagnants : quelle part de ta formule a gagné, ce qu'on garde, ce qu'on change) |
 | Les variations | VARIATIONS (les prochaines pubs à produire) |
 | Sur demande | MONTAGE (le guide de montage d'une créative), BILAN (l'historique du produit) |
 
@@ -160,7 +172,7 @@ Dans l'onglet Code, dans ton dossier de travail, écris simplement : « Je veux 
 - **Ce que tu vends** : un produit physique, un produit numérique ou un webinaire.
 - **As-tu déjà fait des pubs sur ce produit ?** Avec ou sans export, ou pas encore.
 - **Qui fait les vidéos** : toi, un monteur, ou personne pour l'instant.
-- **Ton budget pub par semaine, pour ce produit seulement.** Il décide du nombre de créatives : moins de 70 $, 6 ; jusqu'à 150 $, 10 ; jusqu'à 300 $, 15 ; au-delà, 20.
+- **Ton budget pub par semaine, pour ce produit seulement.** Il décide du nombre de créatives : moins de 105 $, 6 (2 ou 3 idées, 2 ou 3 accroches chacune : le même corps, seule l'ouverture change, pour que le petit budget trouve le concept gagnant) ; jusqu'à 150 $, 10 ; jusqu'à 300 $, 15 ; au-delà, 20.
 
 Puis, en une ligne, ce que ta page ne dit pas : tes pays, ton objectif, et ton export si tu en as un (voir plus bas). Tu reçois le document complet en formule gratuite ; tu peux changer l'un ou l'autre quand tu veux.
 
@@ -189,6 +201,8 @@ Tu n'as rien à retenir : Claude te le rappelle à chaque « on continue ».
 
 - **Le jour 3 du test**, il te propose un premier point (seulement les échecs évidents).
 - **Le jour 7**, il te demande l'export, les deux répartitions et le rapport de livraison, puis il dit quelle pub couper, garder ou décliner.
+- **Une gagnante n'est jamais un nombre de ventes.** D'abord rentable (une marge reste après la pub : 3 ventes qui ont coûté plus que leur marge ne gagnent pas), puis tout est pesé : le nombre de ventes, l'accroche et la rétention notées sur 10 (une rétention de 10 à 15 % vaut déjà 7 à 8 sur 10 ; 40 %, c'est parfait), le CTR et le CPM. Le classement du test montre d'abord le plus de ventes pour le moins d'argent.
+- **Le registre des gagnants** (GAGNANTS) décompose chaque gagnante sur ta formule, ADN (avatar, désir, niveau de conscience) × angle × format, dit quel élément a gagné, classe tout ce qui a été testé (prouvé, prometteur, mitigé, à éviter) et donne la prochaine chose à changer. Il grandit à chaque cycle.
 - **Un export que tu as déposé** et pas encore lu, **une vidéo livrée** pas encore contrôlée, **une production en retard** : il te le dit en premier.
 - **À la fin de chaque test**, une question : le prochain cycle avec les variations des gagnantes (le plus souvent), ou revoir la stratégie quand rien ne gagne.
 - **Quand la stratégie est refaite**, tu reçois un nouveau document complet. L'ancien est gardé à côté (STRATEGIE-CREATIVE-cycle-01.pdf).

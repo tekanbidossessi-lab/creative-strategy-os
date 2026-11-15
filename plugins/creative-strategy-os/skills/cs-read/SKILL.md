@@ -24,7 +24,8 @@ python S/read.py import     <dossier> data/exports/meta-<du>-<au>.xlsx          
 python S/read.py import     <dossier> data/exports/meta-7j.xlsx --window 7d       # the last 7 days: fatigue
 python S/read.py deliveries <dossier> data/deliveries/<semaine>.xlsx               # cash on delivery
 python S/read.py verdicts   <dossier> [--apply]                                    # --apply writes winner/killed/paused
-python S/read.py report     <dossier> [--done]                                     # deliverables/LECTURE.md
+python S/read.py report     <dossier> [--done]                                     # deliverables/LECTURE.md + GAGNANTS.md
+python S/read.py winners    <dossier>                                              # the register of winners alone
 ```
 
 - **The export:** ad level, the « Lecture créa » preset (creative-strategist/references/results.md). TikTok's
@@ -38,16 +39,23 @@ python S/read.py report     <dossier> [--done]                                  
   with its status (Livré, Annulé, Retourné), per ad when a column carries the ad's code: the cost per delivered
   order is shown ad by ad.
 - **The reading, in order:** spent the cut line without an order, or with a cost per order far above the target
-  → cut. Too early → wait. Enough orders under
-  the target → winner (fatigue flagged when its hook drops on 7 days). Otherwise the first cause found: the
+  → cut. Too early → wait. A winner is never a number
+  of sales (Richie 15/11/2026): profitable first (cost per order under the target and a margin left after ads),
+  then weighed on everything — the orders (up to 4 points) plus the margin, the hook and hold marks out of 10 (hold
+  10–15 % ≈ 7–8/10, 40 % = 10/10), the link CTR and the CPM; 5 points win, « à confirmer » under 5 orders; a
+  profitable ad without the evidence is « prometteuse » (fatigue flagged when a winner's hook drops on 7 days). Otherwise the first cause found: the
   opening (hook under 30 %), the body (hold under 5 %), the message (link CTR under 1 % for a video), the link
   or the page speed (clicks that don't land), the page or the offer (visits that don't order), a high CPM with a
   low frequency, fatigue. A CPM that jumps on the last 7 days gives a date to look again (5 days). An ad Meta
   starves (under 20 % of its ad set's spend after 3 days) is flagged, not judged.
 - **What the cycle teaches:** an avatar whose judged ads all lose « ne répond pas favorablement » and the next
   reserve avatar can enter (R27); an element two losers share and no winner has is dropped; the account's medians
-  go to `library/benchmarks.yaml` (its own reference points, cycle after cycle); the winners' hook, format and
-  angle go to `library/blocks.yaml`.
+  go to `library/benchmarks.yaml` (its own reference points, cycle after cycle); the winners' hook, format, angle,
+  avatar, desire, awareness and emotion go to `library/blocks.yaml`. The report ranks the test (most orders for
+  the least money, margin after ads) and writes `deliverables/GAGNANTS.md`, the register of winners across every
+  cycle: each winner taken apart on the formula ADN (avatar · désir · niveau de conscience) × angle × format,
+  which variable won (the one a variation changed, or what sets it apart from the losers of the same avatar),
+  every element classified (prouvé, prometteur, à éviter, pas tranché), and what to keep and change next.
 - **Then:** the winners go to cs-iterate (ten variations each), the losers' fixes too (a hook B replaces the loser
   of its ad set).
 

@@ -36,6 +36,8 @@ python S/iterate.py apply  <dossier>                  # opens the next cycle (st
 - **To learn, one change; to extend a tiring winner, two can combine.** The report says what is NOT a new creative
   (the hook sentence alone, the music alone, the subtitle font, the block order alone, a small trim), the confirmed
   hypotheses of the first test, and the 80/20 rule (validated blocks from library/blocks.yaml, plus one new thing).
+- **Start from deliverables/GAGNANTS.md** (cs-read): keep what is « prouvé », drop what is « à éviter », and give
+  each winner the next variable its line names, one at a time.
 - **A loser's cause picks its first variation:** an opening that doesn't hold → a new opening; a body that loses
   people → the structure (the opening stays); a message that doesn't sell → the offer; fatigue → another person.
 - **Right now, in the running test:** a loser whose opening fails gets its brief's hook B (C03 V1 B), in place of
