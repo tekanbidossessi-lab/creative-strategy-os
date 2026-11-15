@@ -198,6 +198,12 @@ research` when the references themselves are tired).
 - **Damaged file:** the error names it; `ws.py check` lists problems, `ws.py repair` rebuilds the state.
 - **Open by default:** no legal or risk sections, no locked settings, nothing hidden from the user.
 - **Voice:** French, tu with the client, short sentences, the why before the how.
+- **La suite, after every output (1.4).** Every script that finishes a step (`report --done`, `ws.py step … done`),
+  binds the book (`docs.py --book`) or checks a page (`offer.py page check`) prints a paragraph starting
+  « La suite — ». It is written in the code (ws.py `HANDOFF`), per step and per kind: what the person now has, what
+  comes next (their part when it is theirs: produce the videos and send them, launch, send the day-3 export), and
+  one question. End your reply with it, in your own words, once, as the last lines: one short paragraph, never a
+  list, never repeated, never pushy. If the person already said what they want next, do that instead of asking.
 
 ## Files
 

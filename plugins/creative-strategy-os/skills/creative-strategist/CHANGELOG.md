@@ -1,5 +1,22 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.4.0 — 2026-11-15
+
+- La suite, après chaque sortie : chaque étape finie, le document relié et la page vérifiée se terminent par un court paragraphe « La suite — » écrit dans le code (ws.py HANDOFF, par étape et par type) : ce que tu as, ce qui vient (produis les vidéos et envoie-les-moi, lance, envoie l'export du jour 3), et une seule question.
+- Webinaire, atelier, défi : les pubs tournent 7 à 10 jours avant le live et s'arrêtent le jour du live ; la fiche de lancement calcule la fenêtre depuis live.dates (« Le calendrier des pubs », « Jusqu'au live »), lecture au jour 3 et au jour 5.
+- Guide d'utilisation 1.4.0 (Word et PDF) : écrire ta page de vente ou d'inscription avec la suite, le script de ta VSL, « la suite » après chaque étape, la fenêtre des pubs d'un live.
+- Les pages qui vendent (cs-offer/references/pages-qui-vendent.md) : la page d'offre d'Iman Gadzhi démontée en 23 blocs, les pages de vente de Roméo Moumouni et de Frank Simo, six pages d'inscription africaines, huit types de titres (formule, pourquoi, quand, comment l'adapter), 14 principes, quatre plans de page, une liste de contrôle.
+- La vidéo de vente (cs-offer/references/vsl.md) : la VSL de Djokoinfluent démontée diapositive par diapositive, la règle en 12 points, un plan en 16 blocs pour en faire une ; comment télécharger une VSL (Wistia, ConverteAI, YouTube).
+- Le reciblage (cs-strategy/references/retargeting.md) : les 18 vidéos d'ouverture de panier de Gadzhi transcrites, une vidéo par hésitation, un corps et 2 à 4 accroches ; la stratégie prévoit un ensemble de reciblage pour un public chaud.
+- offer.py page grab / write / check : lire une page entière (sans navigateur d'abord, avec et sans « www. », sinon browser/page_grab.js et le presse-papier), l'écrire comme un brief sur un des quatre plans (référence mot pour mot, ta page, ce qui change), la contrôler (cases vides, blancs, changements non dits, capitales, minuteurs).
+- La méthode « page de vente » de Richie entre dans cs-offer (references/methode-page-de-vente.md), avec la règle de la voix (une personne, à voix haute, deux phrases par point).
+- Le webinaire : le format du live (live, atelier, défi, masterclass, conférence), le nombre de soirées, les dates, l'heure GMT, le prix du ticket ; un défi payant finit ses scripts sur son prix au lieu de « gratuit ». Le livre relie la page en brief à la place de l'offre quand il n'y a pas d'OFFRE.md.
+- Recherche : research.py plan ajoute les mots du format (atelier gratuit, 3 soirées, défi 3 jours, réserve ta place…) pour un webinaire, sur trois marchés ; plan --sellers suit chaque vendeur par son nom et son domaine, tous pays ; rank montre les funnels par site d'arrivée (un vendeur, plusieurs pages Facebook) ; la page Facebook et le domaine de chaque pub sont gardés.
+- Recherche : le navigateur intégré en premier, Chrome seulement pour ce qui demande une connexion ; vider le lecteur avant une série ; hors connexion, ~25 groupes de pubs par recherche (toutes les pubs d'un annonceur demandent une session connectée).
+- Corrigé : frames accepte plusieurs codes ; transcribe ne passe plus seul à Whisper « base » (il attend la mémoire), refait une transcription absente ou faite en « base », --redo ; briefs.py opening --write n'efface plus le titre à l'écran ; la vérification des mots de l'avatar accepte une phrase conjuguée ou citée ; le téléchargement YouTube fusionne image et son avec le ffmpeg d'imageio-ffmpeg.
+- ws.py set prend plusieurs réglages d'un coup et ajoute un marché (market=CM,GA ; market=-CM pour le retirer), pays et monnaie remplis seuls.
+- Lecture des pages : barres fixes au-dessus de 20 % de l'écran, compteur figé, minuteur à zéro, avis répété, date passée, page d'arrivée morte (page-audit.md).
+
 ## 1.3.2 — 2026-11-09
 
 - Deux parcours : complet (recommandé, par défaut) — le premier cycle finit par UN document de stratégie, relié après chaque étape de l'entrée aux briefs (« version de travail · N parties sur 5 » jusqu'aux briefs) ; par étape — un document par étape.

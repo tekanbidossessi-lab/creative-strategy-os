@@ -82,6 +82,10 @@ before/after, a viral format from outside the niche — and think beyond it as a
 (an objection reply, the parent angle, a 3D animation, natives) is a list of ideas, never a quota. Native ads (that
 don't look like ads) should be at least half; put three or more creatives on open angles.
 
+**A warm audience** (page visitors, started checkouts, live attendees, unconfirmed orders): beside the ten, plan a
+retargeting set from `references/retargeting.md`: one script per hesitation found in the customers' words, each with
+two hooks. It never re-explains the offer from zero.
+
 ## 4. Check and close
 
 ```
@@ -127,6 +131,7 @@ briefs from the export.
 | `references/avatars.md` | Where avatars come from, the page fields, the awareness levels, the traps |
 | `references/ranking.md` | The matrix out of 30, the trio and the reserve, the test structure |
 | `references/system.md` | The angle map, the fields of each creative, the mix, the closing commands |
+| `references/retargeting.md` | Retargeting a warm audience: one video per hesitation, one body with 2–4 hooks (Gadzhi's 18 open-cart videos, transcribed) |
 | `scripts/strategy.py` | inputs, init, score, check, ledger, export, report |
 | `scripts/checks.yaml` | The strategy checks |
 | `tests/test_strategy.py` | Acceptance tests: `python tests/test_strategy.py` |

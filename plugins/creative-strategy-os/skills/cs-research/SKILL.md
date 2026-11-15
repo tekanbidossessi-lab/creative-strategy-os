@@ -36,10 +36,27 @@ For a broad subject (« formation gratuite » brings business schools and banks)
 then leave the off-topic ads out and say how many. To read **one advertiser whole** (a big seller, a competitor),
 `plan <dossier> --page <view_all_page_id> --name "…"` adds one Ad Library search per country × video/image ×
 active/stopped: logged out, a search shows only its first 25 to 30 ads, and the split shows far more (the stopped
-ads are often the richest: the ones that ran long).
+ads are often the richest: the ones that ran long). The split does not always help: Iman Gadzhi's 590 active ads
+(15/11/2026) were all video and worldwide, and every country returned the same top 23 groups (the sort order is
+forced back to impressions). All the ads of one big advertiser need a logged-in session: ask the user before using
+their Chrome, read-only.
+
+**A webinar, a free workshop or a challenge** (kind webinar): search the words of the **format**, not the subject.
+`plan <dossier>` with no `--terms` (or `--format` beside your terms) adds « atelier gratuit, 3 soirées, défi 3 jours,
+formation gratuite, réserve ta place gratuite, masterclass gratuite, webinaire gratuit, en direct 20h GMT… » on the
+Ad Library, for the first three markets only: the same sellers come back in every country, so stop a country when it
+brings under 20 % new ads. After the import, `rank` shows the funnels by landing site (one seller can run ten
+Facebook pages to one site); then `plan <dossier> --sellers "Frank Simo, lionelhortis.com"` searches each seller by
+name and by domain, all countries: the sellers that no format word finds come out this way (webinar v3, 13–14/11/2026).
 
 ## 2. Find
 
+- **Which browser (Richie, 13/11/2026):** the **built-in browser** first, even when Chrome is connected: the Ad
+  Library and TikTok need no login, and it ran 46 searches in an hour while Chrome froze. Claude in Chrome only for
+  what needs the user's login (Instagram, Facebook comments, all of one advertiser's ads). The reader keeps its
+  searches from one session to the next: run `__csRun('clear')` before a new series. The pane can stay hidden; the
+  COPIER button still needs a real click (find its ref, then left_click). Close the built-in browser before
+  `transcribe`: Whisper needs the memory.
 - **Free (browser):** Claude in Chrome (or the built-in browser for the Ad Library and TikTok, which need no login):
   - Ad Library with `CS/browser/adlib_links.js`; for more than a few searches, `S/browser/adlib_batch.js` (pasted
     once, then one line per search; logged out, Meta shows ~30 ads per search, so breadth comes from many searches);

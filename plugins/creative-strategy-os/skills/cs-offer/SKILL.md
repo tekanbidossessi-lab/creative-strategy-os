@@ -71,6 +71,30 @@ offer block, order form, bottom). Fill `page_brief` in library/offer.yaml (now, 
 can redo it without a call, and record each verdict:
 `python S/offer.py check <dossier> page_hero warn --evidence "titre = nom du produit"`.
 
+**Writing a page like a brief** (1.4): read the reference page whole, then write the client's page section by section
+against it, every change said:
+```
+python S/offer.py page grab  <dossier> <url> --name frank-simo-atelier   # library/competitors/pages/<nom>.md
+python S/offer.py page write <dossier> --plan C --ref library/competitors/pages/frank-simo-atelier.md
+python S/offer.py page check <dossier> --plan C                          # empty cells, blanks, unsaid changes, timers
+```
+`grab` downloads the page and tries with and without « www. »; a page built in JavaScript (Framer, Chariow, 429,
+403) is read in the built-in browser with `CS/browser/page_grab.js`, a real click on SAUVERPAGE, then
+`page-paste <dossier> --name <nom>`. Plans: A sales page after a live, B cold sales page, C webinar /
+workshop / challenge sign-up page (the 15 sections three sellers converge on), D cash-on-delivery product page. The
+copy itself follows `references/methode-page-de-vente.md` (Richie's rules: one person out loud, two sentences per
+point, proof under the title, first-person buttons, waves instead of midnight timers).
+
+**Writing or auditing any page** (a sales page after a live, a cold sales page, a webinar or challenge sign-up page,
+a product page): read `references/pages-qui-vendent.md` first. It takes apart Iman Gadzhi's Monetise offer page block
+by block, Roméo Moumouni's and Frank Simo's sales pages and six African sign-up pages, with the eight headline types
+(formula, why it works, when, how to adapt), the 14 principles, four page plans ready to fill, and the pre-delivery
+checklist. Start from the visitor's awareness level: it decides the page.
+
+**Writing a sales video (VSL)** for the page: read `references/vsl.md`. It takes apart Djokoinfluent's 10-minute VSL
+for « System V.I.A. » (AI videos that sell, 10 000 FCFA) slide by slide, with the 12-step rule and a 16-block plan
+adapted to a digital product sold in waves.
+
 ## 4. The ad text (references/ad-text.md)
 
 Write the shared primary text, title and description in `deliverables/texte-pub.md`, built on the best
@@ -130,6 +154,10 @@ Then: the references (cs-research) and the strategy (cs-strategy). The page fixe
 | `references/market.md` | Finding the pages behind long-running ads, reading them, comparing, the synthesis |
 | `references/offer-building.md` | Promise, bundle, gift, risk reversal, anchor, scarcity, economics, price test |
 | `references/page-audit.md` | The nine sections of the page, the traps, how to write the brief |
+| `references/methode-page-de-vente.md` | Richie's page-copy method, element by element (title, proof, price waves, buttons, voice) |
+| `CS/browser/page_grab.js` | Read a whole page in the built-in browser when a download fails (clipboard, like COPIER) |
+| `references/vsl.md` | The sales video taken apart (Djokoinfluent, 10 min), the 12-step rule, a plan to make one |
+| `references/pages-qui-vendent.md` | Pages that sell, taken apart: Gadzhi's offer page block by block, African sales and sign-up pages, 8 headline types, principles, page plans, checklist |
 | `references/ad-text.md` | The shared ad text: structure, title, description, what lint checks |
 | `references/followup.md` | Confirmation call script and WhatsApp messages |
 | `scripts/offer.py` | competitor, compare, init, plan, simulate, lint, check, report |

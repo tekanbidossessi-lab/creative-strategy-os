@@ -698,12 +698,14 @@ DOC_KIND = {"fr": {"FICHE-ENTREE": "Le point de départ", "OFFRE": "L'offre et l
                    "STRATEGIE": "La stratégie", "BRIEFS": "Les briefs", "PRODUCTION": "La production",
                    "CONTROLE": "Le contrôle des créatives", "LANCEMENT": "Le lancement",
                    "LECTURE": "La lecture des résultats", "VARIATIONS": "Les variations", "MONTAGE": "Le guide de montage",
-                   "BILAN": "Le bilan du produit"},
+                   "BILAN": "Le bilan du produit",
+                   "CONCURRENTS": "Le marché et les concurrents", "PAGE": "La page, écrite comme un brief"},
             "en": {"FICHE-ENTREE": "The starting point", "OFFRE": "The offer and the page", "RECHERCHE": "The research",
                    "STRATEGIE": "The strategy", "BRIEFS": "The briefs", "PRODUCTION": "Production",
                    "CONTROLE": "The creative check", "LANCEMENT": "The launch", "LECTURE": "Reading the results",
                    "VARIATIONS": "The variations", "MONTAGE": "The editing guide",
-                   "BILAN": "The product's history"}}
+                   "BILAN": "The product's history",
+                   "CONCURRENTS": "The market and the competitors", "PAGE": "The page, written as a brief"}}
 
 
 def build(md_path, out, brand, title_hint="", lang="fr", cover=None):
@@ -785,11 +787,23 @@ def part_blocks(name, blocks, n_part):
     return out, toc
 
 
+PAGE_BRIEFS = ("PAGE-INSCRIPTION", "PAGE-C", "PAGE-A", "PAGE-B", "PAGE-D")
+
+
+def part_file(src, part):
+    """The file of one book part. OFFRE falls back on the page written as a brief (offer.py page write) when the step
+    has no OFFRE.md: a webinar's offer is its sign-up page."""
+    f = src / f"{part}.md"
+    if f.exists() or part != "OFFRE":
+        return f
+    return next((src / f"{n}.md" for n in PAGE_BRIEFS if (src / f"{n}.md").exists()), f)
+
+
 def build_book(P, ws, out, names=None):
     lang = lang_of(ws)
     T = TEXT[lang]
     src = P["root"] / "deliverables"
-    found = [n for n in BOOK_PARTS if (src / f"{n}.md").exists() and (not names or n in names)]
+    found = [n for n in BOOK_PARTS if part_file(src, n).exists() and (not names or n in names)]
     if not found:
         raise WsError("aucune partie à relier : il faut au moins un de " + ", ".join(f"{n}.md" for n in BOOK_PARTS))
     brand = brand_of(ws)
@@ -808,7 +822,7 @@ def build_book(P, ws, out, names=None):
 
     parts, entries, appendix = [], [(1, T["start"], "start")], []
     for n, part in enumerate(found, 1):
-        body, checks = split_checks(parse(read_text(src / f"{part}.md")))
+        body, checks = split_checks(parse(read_text(part_file(src, part))))
         blocks, toc = part_blocks(part, body, n)
         ptitle, psub = T["parts"][part]
         parts.append((n, part, ptitle, psub, blocks))
@@ -935,7 +949,7 @@ def main(argv=None):
                 raise WsError(f"{out.name} est ouvert dans Word : ferme-le et relance")
             mark.write_text(str(cycle), encoding="utf-8")
             pdf = None if a.no_pdf else to_pdf(out)
-            have = [n for n in BOOK_PARTS if (src / f"{n}.md").exists() and (not want or n in want)]
+            have = [n for n in BOOK_PARTS if part_file(src, n).exists() and (not want or n in want)]
             left = [TEXT[lang]["parts"][n][0] for n in BOOK_PARTS if n not in have]
             state_of = f"{len(have)} partie(s) sur 5" + (f", version de travail (manque : {', '.join(left)})"
                                                           if "BRIEFS" not in have else "")
@@ -943,6 +957,7 @@ def main(argv=None):
             print(f"Relié : {state_of}.")
             print(f"Écrit : {out}" + (f"\n        {pdf}" if pdf else
                   ("" if a.no_pdf else "\n  pas de PDF : ni Word ni LibreOffice sur cet ordinateur (ws.py doctor)")))
+            print("\n" + W.handoff(P, "book", ws, state))
             return
         mds = sorted(src.glob("*.md")) if src.exists() else []
         if want:

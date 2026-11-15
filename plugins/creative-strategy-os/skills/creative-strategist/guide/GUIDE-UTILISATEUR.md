@@ -1,6 +1,6 @@
 # Creative Strategy OS — le guide d'utilisation
 
-*Version 1.3.2 · pour Windows et Mac*
+*Version 1.4.0 · pour Windows et Mac*
 
 ## Ce que fait Creative Strategy OS
 
@@ -59,15 +59,15 @@ Fais les étapes dans l'ordre. Ne saute pas l'étape 3 : la suite doit atterrir 
 
 **1. L'app Claude.** Télécharge-la sur claude.ai/download, installe-la et connecte-toi avec ton compte Claude. Ouvre l'onglet **Code** une première fois pour vérifier qu'il s'affiche. Puis ferme l'app.
 
-**2. Le fichier de la suite.** Tu as reçu `creative-strategy-os-1.3.2.zip`. Laisse-le dans ton dossier **Téléchargements**. Ne l'ouvre pas en double-cliquant.
+**2. Le fichier de la suite.** Tu as reçu `creative-strategy-os-1.4.0.zip`. Laisse-le dans ton dossier **Téléchargements**. Ne l'ouvre pas en double-cliquant.
 
 **3. Mettre la suite à sa place.** Ouvre le menu Démarrer, tape **PowerShell** et ouvre « Windows PowerShell ». Copie cette ligne, colle-la avec un clic droit, puis appuie sur Entrée :
 
 ```
-Expand-Archive -Path "$env:USERPROFILE\Downloads\creative-strategy-os-1.3.2.zip" -DestinationPath "$env:USERPROFILE\.claude\skills" -Force
+Expand-Archive -Path "$env:USERPROFILE\Downloads\creative-strategy-os-1.4.0.zip" -DestinationPath "$env:USERPROFILE\.claude\skills" -Force
 ```
 
-Vérifie le résultat : ouvre l'Explorateur de fichiers, colle `%USERPROFILE%\.claude\skills` dans la barre d'adresse et appuie sur Entrée. Tu dois voir **dix dossiers** (creative-strategist, cs-briefs, cs-intake, cs-iterate, cs-launch, cs-offer, cs-read, cs-research, cs-review, cs-strategy) et un fichier `manifest.json`. Si tu vois un seul dossier nommé `creative-strategy-os-1.3.2`, c'est qu'il a été décompressé autrement : ouvre-le, sélectionne tout ce qu'il contient, et déplace-le d'un niveau, directement dans `skills`.
+Vérifie le résultat : ouvre l'Explorateur de fichiers, colle `%USERPROFILE%\.claude\skills` dans la barre d'adresse et appuie sur Entrée. Tu dois voir **dix dossiers** (creative-strategist, cs-briefs, cs-intake, cs-iterate, cs-launch, cs-offer, cs-read, cs-research, cs-review, cs-strategy) et un fichier `manifest.json`. Si tu vois un seul dossier nommé `creative-strategy-os-1.4.0`, c'est qu'il a été décompressé autrement : ouvre-le, sélectionne tout ce qu'il contient, et déplace-le d'un niveau, directement dans `skills`.
 
 **4. Les outils.** Dans la même fenêtre PowerShell, colle cette ligne et appuie sur Entrée :
 
@@ -90,7 +90,7 @@ Si tu lis « Python n'est pas encore visible », c'est normal la première fois.
 **2 et 3. Mettre la suite à sa place.** Laisse le zip dans **Téléchargements**. Ouvre le Terminal (Cmd + Espace, tape « Terminal »), colle cette ligne et appuie sur Entrée :
 
 ```
-mkdir -p ~/.claude/skills && unzip -o ~/Downloads/creative-strategy-os-1.3.2.zip -d ~/.claude/skills
+mkdir -p ~/.claude/skills && unzip -o ~/Downloads/creative-strategy-os-1.4.0.zip -d ~/.claude/skills
 ```
 
 Pour vérifier, colle `open ~/.claude/skills` dans le Terminal : tu dois voir les dix dossiers et `manifest.json`.
@@ -211,6 +211,33 @@ Tu n'as rien à retenir : Claude te le rappelle à chaque « on continue ».
 | « Fais-moi les variations » | Les prochaines pubs à partir des gagnantes |
 | « Fais-moi le guide de montage de C01 » | La voix off et, phrase par phrase, le clip à utiliser |
 | « Vérifie que tout est prêt » | Le contrôle de ton ordinateur |
+| « Écris ma page de vente à partir de cette page : <lien> » | Ta page entière, section par section, contre une page qui vend |
+| « Fais-moi la page d'inscription de mon atelier » | La page d'inscription sur le plan des pages qui remplissent les lives |
+| « Écris le script de ma vidéo de vente (VSL) » | Le script en 12 étapes, comme une pub longue, pour le haut de ta page |
+
+## Après chaque étape : la suite
+
+Tu n'as pas à deviner quoi faire ensuite. À la fin de chaque étape, Claude termine par un court paragraphe qui
+commence par « La suite » : ce que tu as maintenant, ce qui vient, et une seule question. Quand la suite est à toi, il
+le dit : « produis les vidéos et envoie-les-moi », « crée la campagne et dis-moi le jour où elle part », « au jour 3,
+envoie-moi l'export ». Tu réponds « oui », ou tu dis ce que tu veux à la place.
+
+## Écrire ta page de vente
+
+La suite n'écrit pas que des pubs : elle écrit aussi la page où elles mènent. Une page produit, une page de vente, une
+page d'inscription à un webinaire, un atelier ou un défi.
+
+1. Donne à Claude le lien d'une page qui vend déjà dans ton domaine (ou laisse-le en choisir une parmi celles qu'il a
+   lues pendant l'offre). Il la lit en entier, même quand elle est construite en JavaScript.
+2. Il choisit le plan qui va avec ce que tu vends : **A** la page de vente après un live, **B** la page de vente à froid,
+   **C** la page d'inscription à un live, un atelier ou un défi, **D** la page produit avec paiement à la livraison.
+3. Il écrit ta page section par section, à côté de la page de référence : sa phrase, la tienne, et ce qui change.
+   Tes chiffres et tes preuves restent en [__] : c'est toi qui les remplis.
+4. Il vérifie : les sections vides, les blancs, les changements non expliqués, les comptes à rebours qui mentent.
+5. Tu mets la page en ligne et tu lui envoies le lien : il la relit sur téléphone, comme un visiteur.
+
+Il sait aussi écrire le script d'une **vidéo de vente (VSL)** pour le haut de la page, construit comme une pub longue :
+le titre qui arrête, la douleur, la preuve, la méthode, l'offre, la garantie, l'appel.
 
 ## Ce que tu vends
 
@@ -234,6 +261,10 @@ Les dix étapes restent les mêmes. Ce qui change : ce qu'on compte, ce qui fait
 - la page d'inscription : il y lit la date et l'heure du live, si c'est gratuit, s'il y a un replay, et ce que le formulaire demande ;
 - le prix du programme vendu pendant le live, et le paiement en plusieurs fois s'il existe ;
 - la part des inscrits qui viennent au live et la part des présents qui achètent. Si tu ne les connais pas, il part de 30 % et 5 %, et il le dit.
+
+**Les pubs d'un live tournent 7 à 10 jours avant le live, jusqu'au jour du live, puis s'arrêtent.** La fiche de
+lancement calcule les jours à partir de la date du live, et la lecture se fait au jour 3 et au jour 5, quand il reste
+assez de temps pour couper les perdantes. Le live suivant repart avec les gagnantes.
 
 Dans la recherche, une pub de webinaire ne tourne que 10 à 14 jours. Ce qui prouve que le tunnel d'un annonceur paie, c'est le nombre de pubs qu'il lance, plus que la durée de chacune. **Après chaque live**, donne à Claude les inscrits, les présents, les ventes et la dépense. Il te donne le coût par présent et par vente, et remplace les taux supposés par les vrais.
 

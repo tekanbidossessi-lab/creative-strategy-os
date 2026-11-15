@@ -733,12 +733,108 @@ def cmd_check(a):
     sys.exit(1 if errors else 0)
 
 
+# 1.4, 15/11/2026 (Richie): after every output the suite itself says what the person now has and what comes next,
+# in one short paragraph that ends on one question. Hard-coded here so it never depends on the conversation:
+# every step that finishes goes through set_step, the book through docs.py, the page through offer.py page.
+# Claude ends its reply with this paragraph in its own words, once, as its last lines. Never a list, never pushy.
+HANDOFF = {
+    "intake": {
+        "*": "Tu as ta fiche d'entrée : ce qu'une {one} peut coûter en pub et si ton pixel compte juste. La suite, "
+             "c'est l'offre et la page : je lis les pages des concurrents dont les pubs tournent depuis des semaines, "
+             "et je compare avec la tienne. On s'y met ?",
+    },
+    "offer": {
+        "*": "Ton offre est chiffrée et ta page a son brief, section par section. Si tu veux, j'écris la page entière à "
+             "partir d'une page qui vend déjà (dis « écris ma page »). La suite : les références, les pubs et les "
+             "vidéos qui ont déjà vendu dans ton marché. Je lance la recherche ?",
+    },
+    "research": {
+        "*": "Tes références sont trouvées, transcrites et lues. La suite : les avatars (à qui on parle), les angles "
+             "et le système de créas à tester. Je les écris ?",
+    },
+    "strategy": {
+        "*": "Ta stratégie est posée : les avatars, le trio testé et les créas à produire. La suite : les briefs, une "
+             "page par créa que ton monteur ou ton IA peut suivre sans t'appeler. Je les écris ?",
+    },
+    "briefs": {
+        "*": "Tes briefs sont prêts{book}. Maintenant c'est à toi : produis les vidéos (toi, ton monteur ou l'IA), "
+             "nomme chaque fichier par son code (C01, C02…), puis envoie-les-moi : je contrôle chacune avant qu'un "
+             "franc ne parte. Tu veux que je répartisse qui produit quoi et pour quand ?",
+    },
+    "production": {
+        "*": "Toutes les créas sont livrées. La suite : le contrôle, vidéo par vidéo, contre son brief. Je les "
+             "regarde ?",
+    },
+    "review": {
+        "*": "Le contrôle est fait : chaque créa est bonne à lancer, à corriger ou à refaire, et chaque correction a "
+             "son message prêt pour celui qui l'a faite. Quand elles sont toutes bonnes, dis « lance » et j'écris ta "
+             "fiche de lancement. On lance ?",
+    },
+    "launch": {
+        "*": "Ta campagne est prête à créer, nom par nom. Une fois en ligne, ne touche à rien pendant 3 jours. Au jour "
+             "3 puis au jour 7, envoie-moi l'export au niveau des pubs (colonnes « Lecture créa ») : je te dis quoi "
+             "couper, quoi garder, et pourquoi. Tu me dis le jour où elle part ?",
+        "webinar": "Ta campagne est prête à créer, nom par nom. Elle tourne 7 à 10 jours avant le live et s'arrête le "
+                   "jour du live. Ne touche à rien pendant 3 jours, puis envoie-moi l'export au niveau des pubs : il "
+                   "reste assez de jours pour couper les perdantes et pousser les gagnantes avant le live. Après le "
+                   "live, donne-moi les inscrits, les présents et les ventes. Tu me dis le jour où elle part ?",
+    },
+    "read": {
+        "*": "Tu sais quoi couper, quoi garder et pourquoi. Fais ces gestes dans le Gestionnaire aujourd'hui. La "
+             "suite : les variations des gagnantes, le prochain lot de pubs à produire. Je les prépare ?",
+        "webinar": "Tu sais quoi couper, quoi garder et pourquoi. Fais ces gestes dans le Gestionnaire aujourd'hui. "
+                   "La suite : les variations des gagnantes pour le prochain live, et les pubs pour ceux qui se sont "
+                   "inscrits sans venir. Je les prépare ?",
+    },
+    "iterate": {
+        "*": "Le prochain cycle est ouvert avec ses variations, chacune ne change qu'une chose. La suite : leurs "
+             "briefs, puis la même boucle (produire, contrôler, lancer, lire). J'écris les briefs ?",
+    },
+    "book": {
+        "*": "Ton document de stratégie est relié, en Word et en PDF{parts}. {after}",
+    },
+    "page": {
+        "*": "Ta page est écrite section par section contre une page qui vend, chaque changement expliqué. Remplis les "
+             "[__] (tes chiffres, tes preuves), mets-la en ligne, puis envoie-moi le lien : je la relis sur téléphone "
+             "comme un visiteur. Tu veux que j'écrive aussi le texte de la pub qui y mène ?",
+    },
+}
+HANDOFF_ONE = {"product": "commande", "digital": "vente", "webinar": "inscription"}
+
+
+def handoff(P, sid, ws=None, state=None):
+    """The paragraph that closes a step: what the person has now, what comes next, one question."""
+    ws = ws if ws is not None else (load_yaml(P["workspace"], {}) or {})
+    kind = ws.get("kind") or "product"
+    texts = HANDOFF.get(sid) or {}
+    text = texts.get(kind) or texts.get("*")
+    if not text:
+        return ""
+    book = parts = after = ""
+    if sid in ("briefs", "book"):
+        bs = book_status(P)
+        if sid == "briefs" and state is not None and book_mode(ws, state):
+            book = ", et ton document complet se relie avec eux (en Word et en PDF)"
+        n = len(bs["have"])
+        parts = f", {n} partie{'s' if n > 1 else ''} sur 5" if n < 5 else ", complet"
+        after = (HANDOFF["briefs"]["*"].split(". ", 1)[1] if n >= 5 else
+                 "Il grandit à chaque étape. On passe à la suivante ?")
+    return "La suite — " + text.format(one=HANDOFF_ONE.get(kind, "commande"), book=book, parts=parts, after=after)
+
+
 def set_step(P, state, sid, status, note=None, outputs=None):
     info = state["steps"].setdefault(sid, {})
     info["status"] = status
     info["date"] = today()
     if outputs:
         info["outputs"] = sorted(set((info.get("outputs") or []) + outputs))
+    if status == "done":
+        try:
+            msg = handoff(P, sid, state=state)
+        except Exception:  # noqa: BLE001 — the hand-off never stops a step
+            msg = ""
+        if msg:
+            print("\n" + msg)
 
 
 def cmd_step(a):
@@ -1057,13 +1153,55 @@ SETTABLE = {"mode": MODES, "stage": STAGES, "programme": PROGRAMMES, "kind": KIN
             "language": None, "goal": None, "budget_daily": None, "team": None}
 
 
+# the francophone markets the suite meets most, so « market=CM » is enough (webinar v3, 13/11/2026: markets had to be
+# added by editing workspace.yaml by hand)
+KNOWN_MARKETS = {
+    "CI": ("Côte d'Ivoire", "XOF"), "BJ": ("Bénin", "XOF"), "SN": ("Sénégal", "XOF"), "TG": ("Togo", "XOF"),
+    "BF": ("Burkina Faso", "XOF"), "ML": ("Mali", "XOF"), "NE": ("Niger", "XOF"), "GW": ("Guinée-Bissau", "XOF"),
+    "CM": ("Cameroun", "XAF"), "GA": ("Gabon", "XAF"), "CG": ("Congo", "XAF"), "TD": ("Tchad", "XAF"),
+    "CF": ("Centrafrique", "XAF"), "GQ": ("Guinée équatoriale", "XAF"), "CD": ("RD Congo", "CDF"),
+    "GN": ("Guinée", "GNF"), "MA": ("Maroc", "MAD"), "DZ": ("Algérie", "DZD"), "TN": ("Tunisie", "TND"),
+    "MG": ("Madagascar", "MGA"), "FR": ("France", "EUR"), "BE": ("Belgique", "EUR"), "CH": ("Suisse", "CHF"),
+    "CA": ("Canada", "CAD"),
+}
+
+
 def cmd_set(a):
     P, ws, state = open_ws(a.folder)
-    if "=" not in a.assignment:
-        raise WsError("format attendu : clé=valeur (ex. mode=hybrid)")
-    key, val = [x.strip() for x in a.assignment.split("=", 1)]
+    items = a.assignment if isinstance(a.assignment, list) else [a.assignment]
+    for it in items:
+        if "=" not in it:
+            raise WsError(f"« {it} » : format attendu clé=valeur (ex. mode=hybrid), plusieurs séparés par un espace")
+    if len(items) > 1:
+        for it in items:
+            cmd_set(argparse.Namespace(folder=a.folder, assignment=[it]))
+        return
+    key, val = [x.strip() for x in items[0].split("=", 1)]
+    if key in ("market", "markets"):
+        mk = ws.setdefault("markets", [])
+        for v in [x.strip() for x in val.split(",") if x.strip()]:
+            if v.startswith("-"):
+                code = v[1:].upper()
+                ws["markets"] = mk = [m for m in mk if not (isinstance(m, dict) and m.get("code") == code)]
+                journal(P, f"Marché retiré : {code}")
+                continue
+            m = parse_market(v if ":" in v else v.upper())
+            if m["code"] in KNOWN_MARKETS and not m["country"]:
+                m["country"], m["currency"] = KNOWN_MARKETS[m["code"]]
+            first = next((x for x in mk if isinstance(x, dict)), {})
+            if ":" not in v and first.get("payment"):
+                m["payment"] = first["payment"]   # same payment as the markets already there
+            if any(isinstance(x, dict) and x.get("code") == m["code"] for x in mk):
+                print(f"{m['code']} est déjà dans les marchés.")
+                continue
+            mk.append(m)
+            journal(P, f"Marché ajouté : {m['code']} ({m['country'] or '?'})")
+        dump_yaml(P["workspace"], ws)
+        print(f"Marchés : {', '.join(x.get('code', '?') for x in mk if isinstance(x, dict))}")
+        print(refresh(P, ws, state))
+        return
     if not key or (not val and key in ("name", "mode", "stage", "programme", "kind", "channels") or key.endswith(".")):
-        raise WsError(f"« {a.assignment} » : il manque la clé ou la valeur")
+        raise WsError(f"« {items[0]} » : il manque la clé ou la valeur")
     md = modes_data()
     if key.startswith("engines."):
         task = key.split(".", 1)[1]
@@ -1089,7 +1227,7 @@ def cmd_set(a):
             raise WsError(f"{key} doit être l'un de : {', '.join(SETTABLE[key])}")
         ws[key] = val
     else:
-        raise WsError(f"clé non modifiable par set : {key}. Les marchés se modifient dans workspace.yaml.")
+        raise WsError(f"clé non modifiable par set : {key}. Un marché : market=CM (market=-CM pour le retirer).")
     dump_yaml(P["workspace"], ws)
     journal(P, f"Réglage : {key} = {val}")
     if key in ("mode",) or key.startswith("engines."):
@@ -1499,7 +1637,7 @@ def build_parser():
     p.add_argument("--contact")
     p = sub.add_parser("set")
     p.add_argument("folder")
-    p.add_argument("assignment")
+    p.add_argument("assignment", nargs="+", help="clé=valeur, plusieurs séparés par un espace ; market=CM ajoute un marché")
     return ap
 
 

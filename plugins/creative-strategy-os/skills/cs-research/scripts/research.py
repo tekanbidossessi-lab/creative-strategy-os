@@ -188,12 +188,29 @@ def norm_adlib_card(c, term, country):
     if len([x for x in cards if x.get('originalImageUrl') or x.get('resizedImageUrl')]) > 1 and (not video):
         fmt_ = 'carousel'
     out = {'key': cand_key('adlib', cid), 'platform': 'adlib', 'id': cid, 'url': f'https://www.facebook.com/ads/library/?id={cid}', 'author': c.get('advertiser') or snap.get('pageName') or c.get('pageName') or '', 'country': country, 'lang': lang_of_country(country), 'term': term, 'started_on': start, 'ended_on': end, 'versions': c.get('versions') or c.get('collationCount'), 'format': fmt_, 'text': card_text(c, snap, cards)[:600], 'landing_url': link, 'media_url': video, 'image_url': image if not video else None, 'image_urls': [x.get('originalImageUrl') or x.get('resizedImageUrl') for x in cards if x.get('originalImageUrl') or x.get('resizedImageUrl')][:10] if fmt_ == 'carousel' else None}
+    if c.get('page'):
+        out['page'] = c['page']
+    out['landing_domain'] = landing_domain(link)
     out['running_days'] = running_days(out)
     if not term and out['author']:
         out['term'] = out['author']
     if REMOVED_AD.search(out['text'] or ''):
         out['removed'] = True
     return out
+
+def landing_domain(url):
+    """The landing site without www, tracking or path: « smartgainia.tech » for http://www.smartgainia.tech/atelier?x=1;
+    a Facebook redirect (l.facebook.com/l.php?u=…) is unwrapped first."""
+    if not url:
+        return ''
+    u = str(url)
+    m = re.search('[?&]u=(https?[^&]+)', u)
+    if m:
+        from urllib.parse import unquote
+        u = unquote(m.group(1))
+    m = re.match('https?://([^/?#]+)', u.strip())
+    host = (m.group(1) if m else '').lower()
+    return host[4:] if host.startswith('www.') else host
 REMOVED_AD = re.compile('Standards publicitaires|ne respectait pas nos|advertising standards|violat(ed|ing) our', re.I)
 
 def norm_tiktok(x, term, lang):
@@ -547,8 +564,23 @@ def lacks_meta(r):
     """A reference imported by its link, or whose file was already there: no author, date or views yet."""
     return r.get('platform') in ('tiktok', 'instagram', 'youtube') and bool(r.get('url')) and (not (r.get('author') and (r.get('created_on') or r.get('started_on')) and r.get('views')))
 
+def ffmpeg_exe():
+    """ffmpeg on the PATH, or the copy that comes with imageio-ffmpeg (installed by the suite's setup)."""
+    import shutil
+    if shutil.which('ffmpeg'):
+        return shutil.which('ffmpeg')
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return ''
+
 def ytdlp(url, out_tmpl, info_only=False):
-    cmd = [sys.executable, '-m', 'yt_dlp', '--no-playlist', '--write-info-json', '--no-progress', '--quiet', '--no-warnings', '-f', 'b[ext=mp4]/b', '-o', out_tmpl, url]
+    ff = ffmpeg_exe()
+    fmt = 'b[ext=mp4]/bv*[height<=1920][ext=mp4]+ba[ext=m4a]/bv*+ba/b' if ff else 'b[ext=mp4]/b'
+    cmd = [sys.executable, '-m', 'yt_dlp', '--no-playlist', '--write-info-json', '--no-progress', '--quiet', '--no-warnings', '-f', fmt, '-o', out_tmpl, url]
+    if ff:
+        cmd[3:3] = ['--ffmpeg-location', ff, '--merge-output-format', 'mp4']
     if info_only:
         cmd.insert(3, '--skip-download')
     try:
@@ -689,6 +721,22 @@ def cmd_transcribe(a):
     out_dir.mkdir(parents=True, exist_ok=True)
     want = [c.upper() for c in a.codes]
     refs = [r for r in data['references'] if isinstance(r, dict) and r.get('file') and is_video(r['file']) and (not want or r.get('code') in want)]
+    redo = 0
+    for r in refs:
+        t = r.get('transcript')
+        if not t:
+            continue
+        f = P['refs_dir'] / t
+        header = read_text(f).splitlines()[0] if f.exists() and f.stat().st_size > 0 else ''
+        if getattr(a, 'redo', False) or not header or ('model=base' in header and a.model != 'base'):
+            for k in ('transcript', 'has_voice', 'words'):
+                r.pop(k, None)
+            if header and f.exists():
+                f.unlink()
+            redo += 1
+    if redo:
+        save_refs(F['refs'], data)
+        print(f'{redo} transcription(s) à refaire (fichier absent, modèle « base », ou --redo).')
     adopted = 0
     for r in refs:
         if want or r.get('transcript'):
@@ -711,9 +759,10 @@ def cmd_transcribe(a):
     model_name = a.model
     if model_name == 'auto':
         (total, avail) = W.ram_mb()
-        model_name = 'medium' if (avail or 0) > 2500 else 'small' if (avail or 0) > 1200 else 'base'
-        if model_name == 'base':
-            print(f'Peu de mémoire libre ({avail} Mo) : Whisper « base », plus léger et un peu moins précis. Pour les références que tu copieras mot pour mot, relance-les plus tard avec --model small.')
+        model_name = 'medium' if (avail or 0) > 2500 else 'small'
+        if (avail or 0) <= 1200:
+            print(f'Peu de mémoire libre ({avail} Mo) : Whisper « small » quand même, parce que ces transcriptions sont copiées mot pour mot. Ferme le navigateur intégré et les applications lourdes ; si la mémoire manque, la commande attend au lieu de passer à « base » (--model base pour le forcer).')
+            a.model = 'small'
     model = None
     print(f'{len(todo)} vidéo(s) à transcrire, une à la fois.')
     allowed = {'fr', 'en'} | {str(m.get('language'))[:2] for m in ws.get('markets') or [] if isinstance(m, dict) and str(m.get('language') or '')[:2] in ('fr', 'en', 'es', 'pt', 'ar')}
@@ -872,12 +921,20 @@ def cmd_sheet(a):
     print('Regarde-les toutes avant de garder une référence : produit hors sujet, téléchargement cassé, mauvais pays.')
 
 def cmd_frames(a):
+    codes = [a.code] + [s for s in a.secs if re.fullmatch('[A-Za-z]{1,4}\\d{1,4}', str(s))]
+    secs = [s for s in a.secs if s not in codes]
+    if len(codes) > 1 and secs:
+        raise WsError('des secondes précises vont avec un seul code : frames <dossier> AL01 3 7.5')
+    for code in codes:
+        _frames_one(a, code, secs)
+
+def _frames_one(a, code, secs):
     (P, ws, state) = open_ws(a.folder)
     F = files(P)
     data = load_list(F['refs'], 'references')
-    r = ref_by_code(data['references'], a.code)
+    r = ref_by_code(data['references'], code)
     if not r or not r.get('file'):
-        raise WsError(f'{a.code} : pas de fichier téléchargé')
+        raise WsError(f'{code} : pas de fichier téléchargé')
     src = P['refs_dir'] / r['file']
     if not is_video(src):
         print(f"{r['code']} est une image : elle sert telle quelle de visuel ({r['file']}), pas d'images clés à extraire")
@@ -885,13 +942,13 @@ def cmd_frames(a):
     out = P['refs_dir'] / 'Frames'
     out.mkdir(parents=True, exist_ok=True)
     notes = []
-    if a.secs:
+    if secs:
         c = open_video(src)
         try:
             st = c.streams.video[0]
             dur = float(st.duration * st.time_base) if st.duration else float(c.duration or 0) / 1000000.0
             ims = []
-            for t in [float(s) for s in a.secs]:
+            for t in [float(s) for s in secs]:
                 if dur and t > dur:
                     notes.append(f'{t:g} s demandé, la vidéo dure {dur:.1f} s : ignoré')
                     continue
@@ -1127,6 +1184,8 @@ def build_parser():
     p.add_argument('--not', dest='not', help='mots qui mettent une pub de côté (« école, banque »)')
     p.add_argument('--page', help="l'identifiant d'une page d'annonceur à lire en entier (view_all_page_id)")
     p.add_argument('--name', help="le nom de l'annonceur, pour --page")
+    p.add_argument('--format', action='store_true', help='ajouter les mots du format (atelier gratuit, 3 soirées, défi…)')
+    p.add_argument('--sellers', help='suivre des vendeurs : noms ou domaines, tous pays (la boule de neige)')
     p = sub.add_parser('discover')
     p.add_argument('folder')
     p.add_argument('--platform', choices=('adlib', 'tiktok', 'instagram'))
@@ -1171,6 +1230,7 @@ def build_parser():
     p.add_argument('codes', nargs='*')
     p.add_argument('--model', default='auto', choices=('base', 'small', 'medium', 'auto'))
     p.add_argument('--fast', action='store_true')
+    p.add_argument('--redo', action='store_true', help='refaire les transcriptions déjà faites')
     p = sub.add_parser('sheet')
     p.add_argument('folder')
     p.add_argument('--platform', choices=tuple(PLATFORMS) + ('all',))
@@ -1179,7 +1239,7 @@ def build_parser():
     p = sub.add_parser('frames')
     p.add_argument('folder')
     p.add_argument('code')
-    p.add_argument('secs', nargs='*')
+    p.add_argument('secs', nargs='*', help="des secondes (un seul code), ou d'autres codes : frames <dossier> AL01 AL09")
     p.add_argument('--auto', type=int, default=6)
     p = sub.add_parser('analyse')
     p.add_argument('folder')

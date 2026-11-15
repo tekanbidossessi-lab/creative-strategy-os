@@ -10,6 +10,7 @@ production lines), launch (the optimisation event) and read (what a result is). 
 every product assumption these profiles replace (JOURNAL-DU-TEST.md, 132 warnings on 50 briefs).
 """
 import re
+from pathlib import Path
 
 KINDS = ("product", "digital", "webinar")
 
@@ -167,6 +168,30 @@ DAY_FULL = (r"\b(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|monday|tu
 HOUR = r"\b\d{1,2} ?(?:h|heures?)(?: ?\d{2})?\b|\b\d{1,2}:\d{2}\b|\b\d{1,2} ?(?:am|pm)\b|\[heure\]|\b(?:midi|minuit)\b|\b[a-z-]+ heures\b"
 FREE = r"\bgratuit\w*|\bfree\b|\b0 (?:f|franc|fcfa)\b"
 SIGN_UP = r"\binscri\w*|\bregist\w*|\bsign ?up\b|\breserve\w* ta place|\bclique\w*|\bclick\b|\brejoin\w*"
+
+
+LIVE_FORMATS = ("live", "atelier", "defi", "masterclass", "conference")
+
+
+def live_of(P):
+    """The live as the offer describes it (library/offer.yaml → live): its format (a one-evening live, a free workshop of
+    several evenings, a challenge, a masterclass, a conference), the number of sessions, the dates, the hour in GMT, the
+    ticket price (0 = free). 1.4, 14/11/2026: the format that fills lives in francophone Africa is « 3 soirées en
+    direct », free, and some challenges are paid."""
+    import yaml
+    f = Path(P["root"]) / "library" / "offer.yaml"
+    try:
+        d = yaml.safe_load(f.read_text(encoding="utf-8")) if f.exists() else {}
+    except Exception:  # noqa: BLE001 — an unreadable offer leaves the defaults
+        d = {}
+    live = (d or {}).get("live") if isinstance((d or {}).get("live"), dict) else {}
+    try:
+        price = float(str(live.get("ticket_price") or 0).replace(" ", "").replace(",", ".") or 0)
+    except ValueError:
+        price = 0.0
+    return {"format": str(live.get("format") or "live"), "sessions": int(live.get("sessions") or 1),
+            "dates": live.get("dates") or [], "hour_gmt": str(live.get("hour_gmt") or live.get("hour") or ""),
+            "ticket_price": price, "paid": price > 0}
 
 
 def event_facts(text):
