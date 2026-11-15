@@ -47,7 +47,9 @@ formation gratuite, réserve ta place gratuite, masterclass gratuite, webinaire 
 Ad Library, for the first three markets only: the same sellers come back in every country, so stop a country when it
 brings under 20 % new ads. After the import, `rank` shows the funnels by landing site (one seller can run ten
 Facebook pages to one site); then `plan <dossier> --sellers "Frank Simo, lionelhortis.com"` searches each seller by
-name and by domain, all countries: the sellers that no format word finds come out this way (webinar v3, 13–14/11/2026).
+name and by domain, all countries: the sellers that no format word finds come out this way (webinar v3, 13–14/11/2026). Since 1.4.1 `rank` does it
+by itself: every site with 3 ads or more goes into `library/sellers.yaml` (names, ads, longest run, first seen) and its
+searches by site and by name are queued once; read them like any other search.
 
 ## 2. Find
 

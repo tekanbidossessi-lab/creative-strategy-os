@@ -1,5 +1,9 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.4.1 — 2026-11-15
+
+- Recherche : chaque vendeur trouvé (un site avec 3 pubs ou plus) entre seul dans library/sellers.yaml et ses recherches par site et par nom, tous pays, sont ajoutées au plan une fois (research.py rank).
+
 ## 1.4.0 — 2026-11-15
 
 - La suite, après chaque sortie : chaque étape finie, le document relié et la page vérifiée se terminent par un court paragraphe « La suite — » écrit dans le code (ws.py HANDOFF, par étape et par type) : ce que tu as, ce qui vient (produis les vidéos et envoie-les-moi, lance, envoie l'export du jour 3), et une seule question.
