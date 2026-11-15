@@ -1,6 +1,6 @@
 # Creative Strategy OS — le guide d'utilisation
 
-*Version 1.4.4 · pour Windows et Mac*
+*Version 1.4.5 · pour Windows et Mac*
 
 ## Ce que fait Creative Strategy OS
 
@@ -71,15 +71,15 @@ Fais les étapes dans l'ordre. Ne saute pas l'étape 3 : la suite doit atterrir 
 
 **1. L'app Claude.** Télécharge-la sur claude.ai/download, installe-la et connecte-toi avec ton compte Claude. Ouvre l'onglet **Code** une première fois pour vérifier qu'il s'affiche. Puis ferme l'app.
 
-**2. Le fichier de la suite.** Tu as reçu `creative-strategy-os-1.4.4.zip`. Laisse-le dans ton dossier **Téléchargements**. Ne l'ouvre pas en double-cliquant.
+**2. Le fichier de la suite.** Tu as reçu `creative-strategy-os-1.4.5.zip`. Laisse-le dans ton dossier **Téléchargements**. Ne l'ouvre pas en double-cliquant.
 
 **3. Mettre la suite à sa place.** Ouvre le menu Démarrer, tape **PowerShell** et ouvre « Windows PowerShell ». Copie cette ligne, colle-la avec un clic droit, puis appuie sur Entrée :
 
 ```
-Expand-Archive -Path "$env:USERPROFILE\Downloads\creative-strategy-os-1.4.4.zip" -DestinationPath "$env:USERPROFILE\.claude\skills" -Force
+Expand-Archive -Path "$env:USERPROFILE\Downloads\creative-strategy-os-1.4.5.zip" -DestinationPath "$env:USERPROFILE\.claude\skills" -Force
 ```
 
-Vérifie le résultat : ouvre l'Explorateur de fichiers, colle `%USERPROFILE%\.claude\skills` dans la barre d'adresse et appuie sur Entrée. Tu dois voir **dix dossiers** (creative-strategist, cs-briefs, cs-intake, cs-iterate, cs-launch, cs-offer, cs-read, cs-research, cs-review, cs-strategy) et un fichier `manifest.json`. Si tu vois un seul dossier nommé `creative-strategy-os-1.4.4`, c'est qu'il a été décompressé autrement : ouvre-le, sélectionne tout ce qu'il contient, et déplace-le d'un niveau, directement dans `skills`.
+Vérifie le résultat : ouvre l'Explorateur de fichiers, colle `%USERPROFILE%\.claude\skills` dans la barre d'adresse et appuie sur Entrée. Tu dois voir **dix dossiers** (creative-strategist, cs-briefs, cs-intake, cs-iterate, cs-launch, cs-offer, cs-read, cs-research, cs-review, cs-strategy) et un fichier `manifest.json`. Si tu vois un seul dossier nommé `creative-strategy-os-1.4.5`, c'est qu'il a été décompressé autrement : ouvre-le, sélectionne tout ce qu'il contient, et déplace-le d'un niveau, directement dans `skills`.
 
 **4. Les outils.** Dans la même fenêtre PowerShell, colle cette ligne et appuie sur Entrée :
 
@@ -95,6 +95,8 @@ Si tu lis « Python n'est pas encore visible », c'est normal la première fois.
 
 **6. Facultatif : la clé Gemini.** Va sur aistudio.google.com/apikey et clique sur « Create API key » (un compte Google suffit, pas de carte). Dans PowerShell, tape `setx GEMINI_API_KEY "ta clé"` en remplaçant ta clé. Ferme ensuite complètement l'app Claude, puis rouvre-la.
 
+**Gemini payant (facultatif).** Si un jour tu actives la facturation dans AI Studio, mets un plafond de dépenses de 5 à 10 $ par mois (Dépenses, « Plafond de dépenses mensuel ») : une recherche de 40 à 60 références coûte bien moins d'1 $. Plafond atteint, Google met l'API en pause jusqu'au 1er du mois et la suite te le dit. En gratuit, ce plafond ne sert à rien : tu ne paies rien.
+
 ### Sur Mac
 
 **1. L'app Claude.** Télécharge-la sur claude.ai/download, installe-la, connecte-toi et ouvre l'onglet **Code** une première fois. Puis ferme l'app.
@@ -102,7 +104,7 @@ Si tu lis « Python n'est pas encore visible », c'est normal la première fois.
 **2 et 3. Mettre la suite à sa place.** Laisse le zip dans **Téléchargements**. Ouvre le Terminal (Cmd + Espace, tape « Terminal »), colle cette ligne et appuie sur Entrée :
 
 ```
-mkdir -p ~/.claude/skills && unzip -o ~/Downloads/creative-strategy-os-1.4.4.zip -d ~/.claude/skills
+mkdir -p ~/.claude/skills && unzip -o ~/Downloads/creative-strategy-os-1.4.5.zip -d ~/.claude/skills
 ```
 
 Pour vérifier, colle `open ~/.claude/skills` dans le Terminal : tu dois voir les dix dossiers et `manifest.json`.

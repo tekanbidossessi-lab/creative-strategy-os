@@ -1001,11 +1001,11 @@ def complete(text):
 def gemini_model(ws):
     """Free mode uses Gemini's free tier (Flash: about 10 videos a minute, a few hundred a day, no card); paid mode
     the stronger Pro. GEMINI_MODEL overrides both."""
-    return os.environ.get('GEMINI_MODEL') or ('gemini-2.5-pro' if str(ws.get('mode')) == 'paid' else 'gemini-2.5-flash')
+    return os.environ.get('GEMINI_MODEL') or ('gemini-pro-latest' if str(ws.get('mode')) == 'paid' else GEMINI_CHAIN_FREE[0])
 
 class GeminiDayQuota(Exception):
     """The free tier's daily quota of a model is used up (it comes back at midnight, Pacific time = 08:00 GMT)."""
-GEMINI_CHAIN_FREE = ['gemini-2.5-flash', 'gemini-2.5-flash-lite']
+GEMINI_CHAIN_FREE = ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-2.5-flash']
 LONG_VIDEO_S = 180
 
 def video_seconds(path):
@@ -1016,8 +1016,14 @@ def video_seconds(path):
     except Exception:
         return 0.0
 
+class GeminiSpendCap(GeminiDayQuota):
+    """Billing on, and the project's monthly spend cap (AI Studio > Dépenses) is reached: Google pauses the API for
+    the whole project until the 1st of the month. Another model would hit the same cap, so the run stops asking."""
+
 def quota_kind(e):
     t = str(e)
+    if re.search('spend(ing)?[ _-]?(cap|limit)|monthly (spend|usage) (cap|limit)|billing account.*(cap|limit|paused)', t, re.I):
+        return 'cap'
     if '429' not in t and 'RESOURCE_EXHAUSTED' not in t:
         return None
     return 'day' if re.search('PerDay|per day|daily', t, re.I) else 'minute'
@@ -1054,8 +1060,19 @@ def gemini_analyse(path, prompt, model=None):
                 return resp.text or ''
             except Exception as e:
                 k = quota_kind(e)
+                if k == 'cap':
+                    raise GeminiSpendCap(str(e)[:200])
                 if k == 'day':
                     raise GeminiDayQuota(str(e)[:200])
+                low = str(e).lower()
+                if '404' in low or 'not_found' in low or 'no longer available' in low:
+                    raise GeminiDayQuota('modèle indisponible : ' + str(e)[:150])
+                if ('503' in low or 'unavailable' in low or 'high demand' in low) and attempt < 3:
+                    print('    Gemini surchargé, 30 s de pause…')
+                    time.sleep(30)
+                    continue
+                if '503' in low or 'unavailable' in low:
+                    raise GeminiDayQuota('modèle surchargé : ' + str(e)[:150])
                 if k == 'minute' and attempt < 3:
                     print('    quota de la minute atteint, une minute de pause…')
                     time.sleep(62)
@@ -1086,6 +1103,7 @@ def cmd_analyse(a):
     model = gemini_model(ws)
     chain = [model] + [m for m in GEMINI_CHAIN_FREE if m != model] if not os.environ.get('GEMINI_MODEL') else [model]
     waiting = []
+    capped = False
     for code in codes:
         r = ref_by_code(data['references'], code)
         if not r:
@@ -1116,8 +1134,13 @@ def cmd_analyse(a):
                         model = chain[0]
                         text = gemini_analyse(src, prompt_for(P, r), model)
                         break
+                    except GeminiSpendCap:
+                        print("    plafond de dépenses du mois atteint (AI Studio > Dépenses) : Google met l'API en pause jusqu'au 1er du mois, je n'interroge plus Gemini")
+                        chain.clear()
+                        capped = True
+                        raise
                     except GeminiDayQuota:
-                        print(f'    {chain[0]} : quota du jour épuisé' + (f', je passe à {chain[1]}' if len(chain) > 1 else ''))
+                        print(f'    {chain[0]} : quota du jour épuisé, modèle indisponible ou surchargé' + (f', je passe à {chain[1]}' if len(chain) > 1 else ''))
                         chain.pop(0)
                         if not chain:
                             raise
@@ -1159,7 +1182,10 @@ def cmd_analyse(a):
             r.update({'analysis': f'Analyses/{dest.name}', 'analysis_engine': 'frames', 'skeleton': True, 'analysis_complete': complete(read_text(dest)), 'frames': sorted(set((r.get('frames') or []) + stamps))})
             print(f"  {code} : {len(stamps)} image(s) clé(s) + le guide dans Analyses/{dest.name} ; regarde les images et écris l'analyse à la place du guide")
         save_refs(F['refs'], data)
-    if waiting:
+    if waiting and capped:
+        print(f"\n{len(waiting)} référence(s) attendent : le plafond de dépenses mensuel de ton projet Gemini est atteint ({', '.join(waiting[:12])}{('…' if len(waiting) > 12 else '')}). Google reprend le 1er du mois. Pour continuer avant : relève le plafond dans AI Studio (Dépenses, « Plafond de dépenses mensuel »), ou « --engine frames » (Claude lit les images clés), ou « --engine pack » (AI Studio dans le navigateur).")
+        journal(P, f"Analyses Gemini : {len(waiting)} en attente, plafond de dépenses atteint ({', '.join(waiting)})")
+    elif waiting:
         print(f"\n{len(waiting)} référence(s) attendent : le quota gratuit du jour est épuisé sur tous les modèles ({', '.join(waiting[:12])}{('…' if len(waiting) > 12 else '')}). Il revient à minuit heure du Pacifique (08:00 GMT, 09:00 au Bénin) : relance « research.py analyse <dossier> --all » demain, il reprend où il s'est arrêté. Si c'est urgent : « --engine frames » sur celles qui comptent (Claude lit les images clés), ou « --engine pack » pour AI Studio dans le navigateur, qui a son propre quota.")
         journal(P, f"Analyses Gemini : {len(waiting)} en attente du quota de demain ({', '.join(waiting)})")
     journal(P, f"Analyses ({('réponse' if a.answer else engine)}) : {', '.join((c.upper() for c in a.codes))}")

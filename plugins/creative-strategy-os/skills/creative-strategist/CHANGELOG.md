@@ -1,5 +1,10 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.4.5 — 2026-11-15
+
+- Gemini : les modèles « gemini-flash-latest » puis « gemini-flash-lite-latest » (Google les garde toujours en service) puis 2.5 Flash ; 2.5 Flash-Lite est fermé aux nouveaux comptes. Un modèle indisponible (404) ou surchargé (503, après deux pauses de 30 s) passe au suivant au lieu d'arrêter l'analyse.
+- Facturation Gemini : quand le plafond de dépenses mensuel du projet est atteint, la suite arrête d'interroger Gemini et dit quoi faire (relever le plafond, images clés, AI Studio) ; le guide conseille un plafond de 5 à 10 $ si la facturation est activée.
+
 ## 1.4.4 — 2026-11-15
 
 - Petit budget : sous 105 $ par semaine pour un produit, 2 ou 3 idées avec 2 ou 3 accroches chacune (un ensemble = une idée, le même corps, seule l'ouverture change) ; la vérification de la stratégie le contrôle.
