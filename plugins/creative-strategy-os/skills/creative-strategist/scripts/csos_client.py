@@ -22,6 +22,9 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_SERVER = "https://csos-licence.onrender.com"   # replaced at build time by build_plugin.py
+PLUGIN_VERSION = "1.4.7"                                  # replaced at build time by build_plugin.py
+MARKETPLACE = "creative-strategy-os"
+MARKETPLACE_URL = "https://github.com/tekanbidossessi-lab/creative-strategy-os.git"
 CONF_DIR = Path(os.environ.get("CSOS_HOME") or (Path.home() / ".csos"))
 CONF = CONF_DIR / "licence.json"
 TEXT_EXT = {".yaml", ".yml", ".md", ".json", ".jsonl", ".csv", ".tsv", ".txt", ".srt", ".vtt", ".html", ".htm"}
@@ -64,6 +67,39 @@ def licence_key():
 def device_id():
     raw = f"{platform.node()}|{os.environ.get('USERNAME') or os.environ.get('USER') or ''}|{platform.system()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+# ---------- updates (1.4.7) ----------
+def ensure_auto_update():
+    """Claude Code leaves auto-update off for every marketplace that isn't Anthropic's, so a buyer who never opens
+    /plugin stays on the version he installed. Turn it on once, in the documented place (autoUpdate on the
+    marketplace's extraKnownMarketplaces entry of the user's Claude settings), and say so. A value the buyer set
+    himself (true or false, e.g. with /plugin, Marketplaces, Disable auto-update) is never touched."""
+    if PLUGIN_VERSION == "dev" or os.environ.get("CSOS_NO_AUTO_UPDATE"):
+        return
+    home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+    path = home / "settings.json"
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        if not isinstance(settings, dict):
+            return
+        markets = settings.setdefault("extraKnownMarketplaces", {})
+        entry = markets.setdefault(MARKETPLACE, {"source": {"source": "git", "url": MARKETPLACE_URL}})
+        if not isinstance(entry, dict) or "autoUpdate" in entry:
+            return
+        entry["autoUpdate"] = True
+        tmp = path.with_suffix(".json.csos-tmp")
+        tmp.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+        print("Creative Strategy OS : mises à jour automatiques activées (chaque nouvelle version s'installe seule au "
+              "démarrage de Claude). Pour les couper : /plugin, Marketplaces, creative-strategy-os, Disable "
+              "auto-update.", file=sys.stderr)
+    except (OSError, ValueError):
+        pass   # never block a command over this
+
+
+def version_line():
+    return f"Creative Strategy OS {PLUGIN_VERSION}"
 
 
 # ---------- transport ----------
@@ -218,7 +254,9 @@ def forward(script_file, argv):
             args[idx] = "{WS}" + ("/" + sub if sub and sub != "." else "")
         payload = {"key": key, "device": device_id(), "script": rel, "argv": args,
                    "files": pack_dir(ws) if ws else {}, "placeholders": names_only(ws) if ws else [],
-                   "inputs": inputs, "client": "1"}
+                   "inputs": inputs, "client": "1", "plugin_version": PLUGIN_VERSION}
+        ensure_auto_update()
+        print(version_line(), file=sys.stderr, flush=True)
         before = digest(ws) if ws else {}
         res = call("/v1/run", payload)
     except LicenceError as e:
@@ -276,4 +314,5 @@ def guide(skill, name):
 
 
 def status():
-    return call("/v1/licence", {"key": licence_key(), "device": device_id()})
+    ensure_auto_update()
+    return call("/v1/licence", {"key": licence_key(), "device": device_id(), "plugin_version": PLUGIN_VERSION})

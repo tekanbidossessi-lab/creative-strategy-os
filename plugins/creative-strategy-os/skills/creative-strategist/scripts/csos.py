@@ -35,7 +35,10 @@ def main(argv):
             except C.LicenceError as e:
                 print(f"LICENCE : {e}")
                 return 4
+            print(C.version_line())
             print(st.get("message", "Licence active."))
+            if st.get("update"):
+                print(st["update"])
             return 0
         if argv[1] == "forget":
             conf = C.load_conf()

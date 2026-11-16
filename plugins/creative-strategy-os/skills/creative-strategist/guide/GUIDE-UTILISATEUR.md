@@ -1,6 +1,6 @@
 # Creative Strategy OS — le guide d'utilisation
 
-*Version 1.4.6 · pour Windows et Mac*
+*Version 1.4.7 · pour Windows et Mac*
 
 ## Ce que fait Creative Strategy OS
 
@@ -71,15 +71,15 @@ Fais les étapes dans l'ordre. Ne saute pas l'étape 3 : la suite doit atterrir 
 
 **1. L'app Claude.** Télécharge-la sur claude.ai/download, installe-la et connecte-toi avec ton compte Claude. Ouvre l'onglet **Code** une première fois pour vérifier qu'il s'affiche. Puis ferme l'app.
 
-**2. Le fichier de la suite.** Tu as reçu `creative-strategy-os-1.4.6.zip`. Laisse-le dans ton dossier **Téléchargements**. Ne l'ouvre pas en double-cliquant.
+**2. Le fichier de la suite.** Tu as reçu `creative-strategy-os-1.4.7.zip`. Laisse-le dans ton dossier **Téléchargements**. Ne l'ouvre pas en double-cliquant.
 
 **3. Mettre la suite à sa place.** Ouvre le menu Démarrer, tape **PowerShell** et ouvre « Windows PowerShell ». Copie cette ligne, colle-la avec un clic droit, puis appuie sur Entrée :
 
 ```
-Expand-Archive -Path "$env:USERPROFILE\Downloads\creative-strategy-os-1.4.6.zip" -DestinationPath "$env:USERPROFILE\.claude\skills" -Force
+Expand-Archive -Path "$env:USERPROFILE\Downloads\creative-strategy-os-1.4.7.zip" -DestinationPath "$env:USERPROFILE\.claude\skills" -Force
 ```
 
-Vérifie le résultat : ouvre l'Explorateur de fichiers, colle `%USERPROFILE%\.claude\skills` dans la barre d'adresse et appuie sur Entrée. Tu dois voir **dix dossiers** (creative-strategist, cs-briefs, cs-intake, cs-iterate, cs-launch, cs-offer, cs-read, cs-research, cs-review, cs-strategy) et un fichier `manifest.json`. Si tu vois un seul dossier nommé `creative-strategy-os-1.4.6`, c'est qu'il a été décompressé autrement : ouvre-le, sélectionne tout ce qu'il contient, et déplace-le d'un niveau, directement dans `skills`.
+Vérifie le résultat : ouvre l'Explorateur de fichiers, colle `%USERPROFILE%\.claude\skills` dans la barre d'adresse et appuie sur Entrée. Tu dois voir **dix dossiers** (creative-strategist, cs-briefs, cs-intake, cs-iterate, cs-launch, cs-offer, cs-read, cs-research, cs-review, cs-strategy) et un fichier `manifest.json`. Si tu vois un seul dossier nommé `creative-strategy-os-1.4.7`, c'est qu'il a été décompressé autrement : ouvre-le, sélectionne tout ce qu'il contient, et déplace-le d'un niveau, directement dans `skills`.
 
 **4. Les outils.** Dans la même fenêtre PowerShell, colle cette ligne et appuie sur Entrée :
 
@@ -104,7 +104,7 @@ Si tu lis « Python n'est pas encore visible », c'est normal la première fois.
 **2 et 3. Mettre la suite à sa place.** Laisse le zip dans **Téléchargements**. Ouvre le Terminal (Cmd + Espace, tape « Terminal »), colle cette ligne et appuie sur Entrée :
 
 ```
-mkdir -p ~/.claude/skills && unzip -o ~/Downloads/creative-strategy-os-1.4.6.zip -d ~/.claude/skills
+mkdir -p ~/.claude/skills && unzip -o ~/Downloads/creative-strategy-os-1.4.7.zip -d ~/.claude/skills
 ```
 
 Pour vérifier, colle `open ~/.claude/skills` dans le Terminal : tu dois voir les dix dossiers et `manifest.json`.

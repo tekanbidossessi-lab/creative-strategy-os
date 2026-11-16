@@ -1,5 +1,9 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.4.7 — 2026-11-16
+
+- Version d'essai : une clé d'essai (produit Chariow à part, reconnu par le serveur) fait une stratégie complète jusqu'aux briefs, avec 20 références et 5 créatives ; lancement, lecture des résultats, variations et contrôle des vidéos restent dans la licence complète ; chaque document porte « Version d'essai » en haut.
+
 ## 1.4.6 — 2026-11-16
 
 - Tes créatives actuelles : quand le produit a déjà eu des pubs, la suite demande les vidéos et images en ligne, chacune nommée exactement comme sa pub dans le Gestionnaire de publicités, dans le dossier mes-pubs/. intake.py export relie chaque fichier à ses chiffres et à sa référence CL, et liste les fichiers à renommer et les pubs qui ont dépensé sans vidéo reçue (--videos pour un autre dossier).

@@ -14,12 +14,12 @@ lecture des résultats et variations.
 Dans Claude Code :
 
 ```
-/plugin marketplace add tekanbidossessi-lab/creative-strategy-os
+/plugin marketplace add https://github.com/tekanbidossessi-lab/creative-strategy-os.git
 /plugin install creative-strategy-os@creative-strategy-os
 ```
 
 Dans l'application Claude (onglet Code ou Cowork) : Paramètres, Plugins, Ajouter une marketplace, colle
-`tekanbidossessi-lab/creative-strategy-os`, puis installe « creative-strategy-os ».
+`https://github.com/tekanbidossessi-lab/creative-strategy-os.git`, puis installe « creative-strategy-os ».
 
 Ensuite, dis simplement à Claude : « je veux des pubs qui vendent pour mon produit ». À la première utilisation, il te
 demande ta clé de licence (dans l'e-mail de Chariow) et l'enregistre sur ton ordinateur.
@@ -28,13 +28,18 @@ Il te faut aussi Python 3.11 ou plus récent (python.org). Claude vérifie le re
 
 ## Mettre à jour
 
-**À faire une fois, juste après l'installation : active les mises à jour automatiques.** Claude ne les active pas
-seul pour une marketplace qui n'est pas celle d'Anthropic. Dans une session : `/plugin`, onglet **Marketplaces**,
-choisis `creative-strategy-os`, puis **Enable auto-update**. Ensuite chaque nouvelle version arrive seule au démarrage.
+**Rien à faire.** À ta première commande, le plugin active pour lui-même les mises à jour automatiques de Claude (il
+te le dit en une ligne ; c'est le réglage « autoUpdate » de ta marketplace dans les paramètres de Claude). Ensuite,
+chaque nouvelle version s'installe seule : Claude affiche « Plugin updated » et elle est active au démarrage suivant
+(ou tout de suite avec `/reload-plugins`).
 
-Pour mettre à jour tout de suite : `/plugin marketplace update creative-strategy-os` (ou, dans l'onglet
-Marketplaces, **Update marketplace**), puis relance la session. Rien à réinstaller, ta clé reste enregistrée. Les
-fiches de méthode, elles, sont toujours à jour : elles viennent du serveur.
+Chaque commande commence par le nom de ta version, par exemple « Creative Strategy OS 1.4.7 ». Si une version plus
+récente existe déjà, la commande te le dit.
+
+Pour mettre à jour tout de suite à la main : `/plugin marketplace update creative-strategy-os`, puis
+`/reload-plugins`. Pour couper les mises à jour automatiques : `/plugin`, onglet **Marketplaces**,
+`creative-strategy-os`, **Disable auto-update**. Rien à réinstaller, ta clé reste enregistrée. Les fiches de
+méthode, elles, sont toujours à jour : elles viennent du serveur.
 
 ## Ce qui part sur internet, et ce qui reste chez toi
 
