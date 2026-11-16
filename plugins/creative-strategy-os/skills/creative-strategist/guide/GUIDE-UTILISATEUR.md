@@ -1,6 +1,6 @@
 # Creative Strategy OS — le guide d'utilisation
 
-*Version 1.4.7 · pour Windows et Mac*
+*Version 1.4.8 · pour Windows et Mac*
 
 ## Ce que fait Creative Strategy OS
 
@@ -56,12 +56,14 @@ Ensuite, chaque fois que tu reviens, tu écris « On continue ». Claude reprend
 ### Tu as acheté une licence (le cas le plus courant)
 
 1. **L'app Claude.** Télécharge-la sur claude.ai/download, installe-la, connecte-toi et ouvre l'onglet **Code** une fois.
-2. **Le plugin.** Dans l'app : Paramètres, Plugins, « Ajouter une marketplace », colle `tekanbidossessi-lab/creative-strategy-os`, puis installe **creative-strategy-os**. Ferme et rouvre l'app.
+2. **Le plugin.** Dans l'app : Paramètres, Plugins, « Ajouter une marketplace », colle `https://github.com/tekanbidossessi-lab/creative-strategy-os.git` (le lien entier, avec `https://` et `.git` : la forme courte échoue sur beaucoup de PC Windows), puis installe **creative-strategy-os**. Ferme et rouvre l'app.
 3. **Ta clé.** Crée un dossier pour ton travail, ouvre-le dans l'onglet Code et écris : « je veux des pubs qui vendent pour mon produit ». Claude te demande ta clé de licence (dans l'e-mail de Chariow) : colle-la. Elle vaut pour 2 ordinateurs, à vie.
 4. **Les outils.** Écris : « installe les outils de Creative Strategy OS ». Claude lance le script d'installation du plugin (Python, Chrome, LibreOffice si tu n'as pas Word, les outils de la suite), comme l'étape 4 ci-dessous, puis vérifie tout avec toi.
 5. **Claude dans Chrome** et **la clé Gemini gratuite** : étapes 5 et 6 ci-dessous.
 
-Les mises à jour arrivent toutes seules (ou bouton « mettre à jour » des plugins) : rien à réinstaller.
+Les mises à jour arrivent toutes seules : à ta première commande, le plugin active les mises à jour automatiques de Claude et te le dit en une ligne. Chaque commande commence par le nom de ta version (« Creative Strategy OS 1.4.7 »). Rien à réinstaller.
+
+**La version d'essai (7 jours).** Avec une clé d'essai, tu fais un produit jusqu'aux briefs : l'entrée, l'offre, la recherche (20 références), la stratégie et 5 briefs. Chaque document porte « Version d'essai » en haut. Le contrôle des vidéos, le lancement, la lecture des résultats et les variations sont dans la licence complète. L'essai vaut pour un ordinateur.
 
 ### Tu as reçu le fichier zip (installation à la main)
 
@@ -319,13 +321,43 @@ Pour donner tes vidéos à Claude, glisse-les dans la conversation ou indique o�
 
 ## L'export du Gestionnaire de publicités
 
-Les colonnes par défaut ne disent pas si l'accroche retient. Crée une fois pour toutes le modèle de colonnes « Lecture créa » (3 minutes) :
+Les colonnes par défaut ne disent pas si l'accroche retient. Avant ton premier export, prépare ton tableau une fois pour toutes (environ 5 minutes). Ensuite, chaque export prend une minute.
 
-1. Gestionnaire de publicités → onglet **Publicités**.
-2. **Colonnes** → **Personnaliser les colonnes**. Coche : Impressions, Couverture, Fréquence, CPM, Montant dépensé ; Lectures de vidéo de 3 secondes, ThruPlays, Lectures à 25 %, 50 %, 75 %, 95 %, 100 %, Durée moyenne de lecture ; Clics sur un lien, CTR (taux de clics sur un lien), CPC ; Achats, Coût par achat, Valeur de conversion ; Vues de page de destination, Ajouts au panier, Paiements initiés.
-3. **Créer une statistique personnalisée**, deux fois : « Taux d'accroche » = Lectures de vidéo de 3 secondes ÷ Impressions ; « Taux de rétention » = ThruPlays ÷ Impressions.
-4. **Enregistrer comme préréglage** : « Lecture créa ».
-5. Exporte au niveau des **publicités** (et, si tu peux, des ensembles et de la campagne), puis deux **répartitions** : par âge, et par plateforme et placement.
+### A. Préparer le tableau « Lecture créa » (une seule fois)
+
+1. Ouvre le Gestionnaire de publicités sur ordinateur (adsmanager.facebook.com), choisis le bon compte publicitaire en haut à gauche.
+2. Clique sur l'onglet **Publicités** (pas Campagnes, pas Ensembles).
+3. Au-dessus du tableau, clique sur **Colonnes** (le menu affiche souvent « Colonnes : Performances »), puis **Personnaliser les colonnes**.
+4. Dans la fenêtre, cherche chaque colonne dans la barre de recherche et coche-la. Les libellés exacts peuvent changer un peu selon la langue du compte.
+5. Clique sur **Créer une statistique personnalisée**, deux fois : « Taux d'accroche » = Lectures de vidéo de 3 secondes ÷ Impressions, format pourcentage ; « Taux de rétention » = ThruPlays ÷ Impressions, format pourcentage.
+6. En bas à gauche, coche **Enregistrer comme préréglage**, nomme-le **Lecture créa**, puis **Appliquer**.
+
+**À quoi ton tableau doit ressembler**, de gauche à droite :
+
+| Groupe | Les colonnes | La question à laquelle elles répondent |
+|---|---|---|
+| Les noms | Nom de la publicité, Diffusion, Paramètre d'attribution | Quelle pub, est-elle active, comment Meta compte |
+| La diffusion | Montant dépensé, Impressions, Couverture, Fréquence, CPM | Combien elle a coûté, à combien de gens, combien de fois |
+| L'ouverture | Lectures de vidéo de 3 secondes, **Taux d'accroche** | Les 3 premières secondes arrêtent-elles le pouce ? |
+| Le corps | ThruPlays, **Taux de rétention**, Lectures à 25 %, 50 %, 75 %, 95 %, 100 %, Durée moyenne de lecture | La vidéo garde-t-elle l'attention, et où on la quitte ? |
+| Le message | Clics sur un lien, CTR (taux de clics sur un lien), CPC (coût par clic sur un lien) | Donne-t-elle envie de cliquer ? |
+| La page | Vues de page de destination, Ajouts au panier, Paiements initiés | Les gens arrivent-ils sur la page, et jusqu'où vont-ils ? |
+| La vente | Achats, Coût par achat, Valeur de conversion des achats | Est-ce que ça vend, et à quel prix ? |
+
+Pour un webinaire, ajoute **Prospects** et **Coût par prospect** (les inscriptions). Pour des pubs vers WhatsApp, ajoute **Conversations par message commencées** et leur coût.
+
+### B. Exporter, à chaque lecture
+
+1. Choisis la période en haut à droite. Fais **deux exports** : **Maximum** (toute la vie des pubs) et **7 derniers jours**. Les deux ensemble montrent la fatigue.
+2. Vérifie que le préréglage **Lecture créa** est bien affiché, et qu'aucune pub n'est cochée (sinon seules les pubs cochées partent).
+3. Clique sur **Rapports** (ou l'icône d'export) → **Exporter les données du tableau** → format **.xlsx** ou **.csv**.
+4. Si tu peux, refais la même chose dans les onglets **Ensembles de publicités** et **Campagnes**. L'onglet Publicités est obligatoire ; les deux autres rendent la lecture plus fine.
+5. Deux répartitions, dans l'onglet Publicités, bouton **Répartition** au-dessus du tableau : **Par diffusion → Âge** (qui achète vraiment), puis **Par diffusion → Plateforme et placement** (Facebook, Instagram, Audience Network). Un export pour chacune.
+6. Donne les fichiers à Claude (glisse-les dans la conversation) ou mets-les dans le dossier `data\exports` du produit. Claude les renomme lui-même.
+
+Si l'export ne marche pas, une capture d'écran du tableau, colonnes visibles, suffit pour dépanner.
+
+**Sur TikTok Ads Manager** : niveau des publicités, colonnes personnalisées : Coût, Impressions, CPM, Clics (destination), CTR (destination), Vues de 2 secondes, Vues de 6 secondes, Temps de lecture moyen, Vues à 25 %, 50 %, 75 %, 100 %, Conversions, Coût par conversion. Puis Exporter.
 
 **Si le produit a déjà eu des pubs, envoie aussi tes créatives actuelles** (les vidéos et images en ligne ou récentes). Mets-les dans le dossier `mes-pubs` du produit, chacune nommée **exactement comme sa pub dans le Gestionnaire de publicités** (par exemple `C01 V1 A VIDEO 3 HEURES DU MATIN.mp4` : Windows refuse le « | » dans un nom de fichier, mets une espace ou un tiret bas à sa place). La suite relie chaque fichier à ses chiffres : on regarde les gagnantes, on ne fait pas que les compter. Elle te dit quels fichiers ne correspondent à aucune pub (à renommer) et quelles pubs ont dépensé sans vidéo reçue. Un produit qui n'a jamais eu de pub n'a rien à envoyer ici.
 
@@ -380,7 +412,9 @@ Dis à Claude « passe en formule hybride » pour changer.
 
 ## Mettre à jour la suite
 
-Quand tu reçois une nouvelle version (par exemple `creative-strategy-os-1.3.3.zip`), mets-la dans **Téléchargements** et écris à Claude : « Installe la mise à jour, le fichier est dans mes Téléchargements. » Il garde une copie de ta version actuelle, installe la nouvelle et lance les tests. Si un test échoue, il remet ta version d'avant tout seul. **Tes dossiers produits ne bougent pas.**
+**Avec le plugin (licence ou essai) : rien à faire.** Les mises à jour automatiques sont actives dès ta première commande. Quand une version sort, Claude affiche « Plugin updated » : elle est active au prochain démarrage, ou tout de suite avec `/reload-plugins`. Chaque commande affiche ta version ; si une plus récente existe, la commande te le dit. Pour mettre à jour à la main : `/plugin marketplace update creative-strategy-os`, puis `/reload-plugins`.
+
+**Avec le fichier zip** : quand tu reçois une nouvelle version (par exemple `creative-strategy-os-1.3.3.zip`), mets-la dans **Téléchargements** et écris à Claude : « Installe la mise à jour, le fichier est dans mes Téléchargements. » Il garde une copie de ta version actuelle, installe la nouvelle et lance les tests. Si un test échoue, il remet ta version d'avant tout seul. **Tes dossiers produits ne bougent pas.**
 
 Pour le faire toi-même sur Windows, dans PowerShell (remplace le numéro de version) :
 

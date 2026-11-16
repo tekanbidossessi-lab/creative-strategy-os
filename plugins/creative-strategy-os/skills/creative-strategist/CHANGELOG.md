@@ -1,5 +1,9 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.4.8 — 2026-11-16
+
+- Guide d'utilisation 1.4.8 : préparer le Gestionnaire de publicités avant l'export (le tableau Lecture créa, groupe par groupe, et l'export pas à pas), le lien d'installation entier, les mises à jour automatiques, la version d'essai.
+
 ## 1.4.7 — 2026-11-16
 
 - Version d'essai : une clé d'essai (produit Chariow à part, reconnu par le serveur) fait une stratégie complète jusqu'aux briefs, avec 20 références et 5 créatives ; lancement, lecture des résultats, variations et contrôle des vidéos restent dans la licence complète ; chaque document porte « Version d'essai » en haut.
