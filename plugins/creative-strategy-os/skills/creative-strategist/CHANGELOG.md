@@ -1,5 +1,10 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.4.6 — 2026-11-16
+
+- Tes créatives actuelles : quand le produit a déjà eu des pubs, la suite demande les vidéos et images en ligne, chacune nommée exactement comme sa pub dans le Gestionnaire de publicités, dans le dossier mes-pubs/. intake.py export relie chaque fichier à ses chiffres et à sa référence CL, et liste les fichiers à renommer et les pubs qui ont dépensé sans vidéo reçue (--videos pour un autre dossier).
+- Le plugin porte le logo de Creative Strategy OS (icône, nom affiché, page GitHub).
+
 ## 1.4.5 — 2026-11-15
 
 - Gemini : les modèles « gemini-flash-latest » puis « gemini-flash-lite-latest » (Google les garde toujours en service) puis 2.5 Flash ; 2.5 Flash-Lite est fermé aux nouveaux comptes. Un modèle indisponible (404) ou surchargé (503, après deux pauses de 30 s) passe au suivant au lieu d'arrêter l'analyse.

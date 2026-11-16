@@ -1,3 +1,5 @@
+<p align="center"><img src="logo.png" alt="Creative Strategy OS" width="260"></p>
+
 # Creative Strategy OS
 
 Un stratège créatif senior dans Claude, pour vendre avec des pubs Meta et TikTok, en français : diagnostic, offre,

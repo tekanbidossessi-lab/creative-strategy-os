@@ -97,7 +97,11 @@ funnel), at ad level (campaign and ad set levels too when possible), plus the Ag
 (creative-strategist/references/results.md gives the clicks). Then:
 `python S/intake.py export <dossier> <export> [--filter TEXTE] --winners 5`: account id, currency,
 optimisation event, countries, hook, hold and funnel columns, baseline, the client's best ads coded CL, and
-the ads that already spent without selling (read them before the strategy). Then the
+the ads that already spent without selling (read them before the strategy). Ask for the current creatives too
+(videos and images now or recently live), each file named exactly like its ad in Ads Manager, in `mes-pubs/`
+(or `--videos <dossier>`): the command links each file to its export row, puts it on the CL reference of the same
+ad, and lists the files whose name matches no ad (to rename) and the ads that spent with no file. Only when ads
+ran: a new product has no videos to send. Then the
 questions of `references/account.md` (admins, partner access, account health, domain, TikTok Business
 Center, market language), each recorded with `intake.py check`. An .xlsx export has no account id: ask for
 the number after `act=` in the Ads Manager address and set it with `ws.py set <dossier>

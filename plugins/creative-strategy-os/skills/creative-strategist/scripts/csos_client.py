@@ -158,6 +158,21 @@ def pack_dir(root):
     return files
 
 
+NAMES_ONLY = ("mes-pubs",)   # folders whose files go to the server by name only (the client's own videos)
+
+
+def names_only(root):
+    """The paths of the files in mes-pubs/ (the client's current ads, named like in Ads Manager). Only their names
+    leave this computer, never their content: the server reads the export against these names."""
+    out = []
+    for top in NAMES_ONLY:
+        d = Path(root) / top
+        if d.is_dir():
+            out += [p.relative_to(root).as_posix() for p in sorted(d.rglob("*"))
+                    if p.is_file() and p.suffix.lower() not in TEXT_EXT]
+    return out[:500]
+
+
 def unpack(value):
     return value["text"].encode("utf-8") if isinstance(value, dict) else base64.b64decode(value)
 
@@ -202,7 +217,8 @@ def forward(script_file, argv):
             sub = Path(argv[idx]).resolve().relative_to(ws).as_posix() if Path(argv[idx]).is_dir() else ""
             args[idx] = "{WS}" + ("/" + sub if sub and sub != "." else "")
         payload = {"key": key, "device": device_id(), "script": rel, "argv": args,
-                   "files": pack_dir(ws) if ws else {}, "inputs": inputs, "client": "1"}
+                   "files": pack_dir(ws) if ws else {}, "placeholders": names_only(ws) if ws else [],
+                   "inputs": inputs, "client": "1"}
         before = digest(ws) if ws else {}
         res = call("/v1/run", payload)
     except LicenceError as e:

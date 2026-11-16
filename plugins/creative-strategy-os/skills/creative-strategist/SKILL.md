@@ -65,7 +65,10 @@ the source of truth for price, offer, delivery). Read the page, then the one box
 already run**, **who makes the videos**, **the weekly budget for this product** (under 70 $ → 6 creatives, up to
 150 $ → 10, up to 300 $ → 15, more → 20). Then one short text question for what's still missing: the countries and
 how people pay (if the page doesn't say), the goal in their own words, and the export (last 30 days, « Lecture
-créa » columns, `references/results.md`) with the ad account id when ads ran. Say in one line that they get the
+créa » columns, `references/results.md`) with the ad account id when ads ran. When ads already ran, also ask for the
+current creatives themselves (the videos and images now or recently live), each file named **exactly as its ad is
+named in Ads Manager**, dropped in the product's `mes-pubs/` folder: `intake.py export` links each file to its row,
+so the winners are watched, not only counted. A product never advertised has none: don't ask. Say in one line that they get the
 complete document (the full path) in the free formula, and that both can change anytime.
 
 The path (`references/workspace.md`, « Les deux parcours »):
