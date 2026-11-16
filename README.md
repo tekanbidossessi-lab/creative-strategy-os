@@ -28,8 +28,13 @@ Il te faut aussi Python 3.11 ou plus récent (python.org). Claude vérifie le re
 
 ## Mettre à jour
 
-Rien à réinstaller : `/plugin marketplace update creative-strategy-os`, ou le bouton de mise à jour des plugins dans
-l'application. Les fiches de méthode, elles, sont toujours à jour.
+**À faire une fois, juste après l'installation : active les mises à jour automatiques.** Claude ne les active pas
+seul pour une marketplace qui n'est pas celle d'Anthropic. Dans une session : `/plugin`, onglet **Marketplaces**,
+choisis `creative-strategy-os`, puis **Enable auto-update**. Ensuite chaque nouvelle version arrive seule au démarrage.
+
+Pour mettre à jour tout de suite : `/plugin marketplace update creative-strategy-os` (ou, dans l'onglet
+Marketplaces, **Update marketplace**), puis relance la session. Rien à réinstaller, ta clé reste enregistrée. Les
+fiches de méthode, elles, sont toujours à jour : elles viennent du serveur.
 
 ## Ce qui part sur internet, et ce qui reste chez toi
 
