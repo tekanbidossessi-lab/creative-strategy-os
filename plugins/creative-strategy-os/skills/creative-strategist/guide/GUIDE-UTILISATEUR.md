@@ -1,6 +1,6 @@
 # Creative Strategy OS — le guide d'utilisation
 
-*Version 1.4.8 · pour Windows et Mac*
+*Version 1.5.0 · pour Windows et Mac*
 
 ## Ce que fait Creative Strategy OS
 
@@ -354,6 +354,18 @@ Pour un webinaire, ajoute **Prospects** et **Coût par prospect** (les inscripti
 4. Si tu peux, refais la même chose dans les onglets **Ensembles de publicités** et **Campagnes**. L'onglet Publicités est obligatoire ; les deux autres rendent la lecture plus fine.
 5. Deux répartitions, dans l'onglet Publicités, bouton **Répartition** au-dessus du tableau : **Par diffusion → Âge** (qui achète vraiment), puis **Par diffusion → Plateforme et placement** (Facebook, Instagram, Audience Network). Un export pour chacune.
 6. Donne les fichiers à Claude (glisse-les dans la conversation) ou mets-les dans le dossier `data\exports` du produit. Claude les renomme lui-même.
+7. **Quand les ventes baissent, un export de plus : tout l'historique jour par jour.**
+   - Période **Maximum**, onglet Publicités, préréglage **Lecture créa**.
+   - Bouton **Répartition → Par période → Jour**.
+   - Vérifie que « Ajouts au panier », « Paiements initiés » et « Valeur de conversion des achats » sont cochés.
+
+   Claude le lit par périodes de deux semaines :
+   - quand la baisse a vraiment commencé ;
+   - combien de temps chaque gagnante a tenu ;
+   - si le prix a changé ;
+   - si c'est l'offre qui s'use ou le paiement qui fuit.
+
+   Souvent, la chute qui paraît nouvelle a commencé bien avant les dernières pubs.
 
 Si l'export ne marche pas, une capture d'écran du tableau, colonnes visibles, suffit pour dépanner.
 
@@ -409,6 +421,25 @@ Quand une créative est prête, nomme le fichier par son code (« C01 V1 A.mp4 �
 - **Payant** : Apify et Gemini en payant, pour aller plus vite et plus large.
 
 Dis à Claude « passe en formule hybride » pour changer.
+
+## Partager tes constats avec Richie (facultatif)
+
+À la première commande, la suite te demande si tu veux partager tes constats avec Richie. Claude te pose la question une fois.
+
+**Si tu dis oui, chaque commande envoie à Richie :**
+- la commande et son résultat ;
+- les erreurs et les avertissements ;
+- ce que la suite a affiché ;
+- les faits de ton produit : le nom, ce que tu vends, le marché, le mode, les étapes et les repères du compte.
+
+À la fin de chaque étape, ou quand tu bloques, Claude ajoute une courte note de ce qui s'est passé.
+
+**Jamais envoyé :** tes vidéos, tes clés, tes mots de passe, les données de tes clients.
+
+**Ce qu'en fait Richie :** il lit chaque constat lui-même et décide quoi corriger dans la prochaine version. Rien ne change dans ta suite sans une nouvelle version testée.
+
+- Activer ou arrêter : dis à Claude « active le partage des constats » ou « arrête le partage des constats ».
+- Écrire toi-même à Richie : dis à Claude « envoie ce retour à Richie : … ».
 
 ## Mettre à jour la suite
 

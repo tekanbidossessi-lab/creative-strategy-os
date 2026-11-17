@@ -1,5 +1,9 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.5.0 — 2026-11-17
+
+- 1.5.0 : partage des constats avec Richie (avec le oui de l'acheteur, base Notion relue à la main) ; tendance du compte par deux semaines (usure de l'offre, fuite au paiement, vie des gagnantes) ; leçons de la page Protocole dans l'audit de page ; ouverture d'une formation qui nomme l'acheteur ; 1-2 images noires au début = note, pas défaut
+
 ## 1.4.8 — 2026-11-16
 
 - Guide d'utilisation 1.4.8 : préparer le Gestionnaire de publicités avant l'export (le tableau Lecture créa, groupe par groupe, et l'export pas à pas), le lien d'installation entier, les mises à jour automatiques, la version d'essai.

@@ -67,7 +67,11 @@ for each one, write:
 - the format, type and nativeness;
 - the tags;
 - `built_on`: references of the same format;
-- `hook_from`: a reference with proof, and `opening` (said, written, shown, at);
+- `hook_from`: a reference with proof, and `opening` (said, written, shown, at). For a course or a digital product,
+  the opening names the buyer and their problem in the first 3 seconds (« Ceci est un message à tous ceux qui font
+  des pubs IA… »). A show opening (a story, a spectacle, a stunt) hooks more people, but they are curious, not
+  buying. On the Protocole (17/11/2026), the show ads hooked 50 % against 35 % and sold 4 times less;
+  the two ads that sold named the buyer from the start;
 - `answers`: the objections it answers;
 - the offer element;
 - the idea, and why;

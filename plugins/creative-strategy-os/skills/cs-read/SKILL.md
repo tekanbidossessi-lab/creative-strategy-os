@@ -26,7 +26,29 @@ python S/read.py deliveries <dossier> data/deliveries/<semaine>.xlsx            
 python S/read.py verdicts   <dossier> [--apply]                                    # --apply writes winner/killed/paused
 python S/read.py report     <dossier> [--done]                                     # deliverables/LECTURE.md + GAGNANTS.md
 python S/read.py winners    <dossier>                                              # the register of winners alone
+python S/read.py trend      data/exports/meta-pubs-historique-jour.xlsx --folder <dossier>   # deliverables/TENDANCE.md
 ```
+
+**Before saying « the new ads don't sell », read the whole history** (`trend`, an export on « Maximum » broken down
+by day). It gives, per two weeks:
+- the cost per purchase, the purchases per 100 clicks, the CPM and the hook;
+- the add-to-carts per page view and the checkouts per add-to-cart;
+- the average order value, which shows a price change.
+
+It also shows how each ad that sold aged: its best period, its last one, and whether it is « usée », « encore
+vivante » or « plus de budget ». Its signals, learned on the Protocole (17/11/2026):
+- **Offer fatigue in this audience.** The purchases per 100 clicks halve, the CPM rises 1.5 times or more, and
+  half the winners are worn out. Change what the buyer sees after the click (the page, the offer, a reason to buy
+  now) before filming more ads.
+- **A checkout leak.** The checkouts per add-to-cart fall under half their usual level. Check the payment provider's
+  failures and abandons by payment method before judging the ads.
+- **New ads that hook better without selling better.** The hook isn't the problem: show ads bring curious people.
+- **A winner's lifespan.** Plan the next winner before it. On the Protocole, a winner lived about a month.
+
+Two more rules:
+- Relaunch an old winner only if it is still « vivante », as a comparison. A worn-out one stays off.
+- Trust Meta's landing page views, not the site's own visit counter: on the Protocole, Meta counted 78 % of clicks
+  arriving where the site counted about 60 %.
 
 - **The export:** ad level, the « Lecture créa » preset (creative-strategist/references/results.md). TikTok's
   English export is read too (Cost as the spend, 2-second views as the hook, 6-second views as the hold; the

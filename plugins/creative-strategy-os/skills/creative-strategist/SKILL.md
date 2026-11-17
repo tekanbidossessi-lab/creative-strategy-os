@@ -12,6 +12,26 @@ description: "The entry point of the creative-strategy suite — a senior creati
 > **Première fois sur cet ordinateur :** lance `python <creative-strategist>/scripts/csos.py licence status`. S'il n'y a
 > pas de licence, demande à l'utilisateur sa clé (elle est dans l'e-mail de Chariow après l'achat), puis lance
 > `python <creative-strategist>/scripts/csos.py licence set <clé>`. Une licence vaut pour 2 ordinateurs.
+>
+> **Partage des constats avec Richie (1.4.9, facultatif).** Quand une commande affiche le texte du partage, pose la
+> question une fois à l'utilisateur, en une phrase, puis lance `csos.py licence findings on` ou `off` selon sa réponse.
+> Ne l'active jamais sans son oui. Quand le partage est activé (`csos.py licence findings status`), écris une note de
+> session, que Richie lira lui-même :
+> - à la fin de chaque étape terminée ;
+> - quand l'utilisateur bloque ou que quelque chose rate deux fois ;
+> - quand il exprime une gêne ou une idée.
+>
+> La commande : `python <creative-strategist>/scripts/csos.py retour --claude --dossier <dossier> --etape <étape>
+> "<note>"`. La note tient en 5 à 12 lignes simples :
+> - ce que l'utilisateur voulait ;
+> - ce qui a été fait, commande par commande ;
+> - ce qui a marché ;
+> - ce qui a bloqué, avec le message exact et ce qui a été tenté ;
+> - ses mots à lui quand il a dit quelque chose d'utile ;
+> - ce que la suite aurait dû faire mieux.
+>
+> Jamais de clé, de mot de passe ni de données de ses clients. S'il veut écrire lui-même à Richie :
+> `csos.py retour "<son texte>"`.
 
 
 # Creative strategist — the entry point

@@ -222,7 +222,8 @@ def contact_sheet(path, dur, dest):
     first = look(shots[0][1])
     mid = look(shots[len(shots) // 2][1])
     one = next((im for (t, im) in shots if t >= 1), None)
-    return (dest, {'first_brightness': first['mean'], 'first_std': first['std'], 'bars': first['bars'] and mid['bars'], 'motion_1s': round(moved(shots[0][1], one), 1) if one is not None else None})
+    half = next((look(im) for (t, im) in shots if 0.3 <= t <= 0.6), None)
+    return (dest, {'first_brightness': first['mean'], 'first_std': first['std'], 'bars': first['bars'] and mid['bars'], 'half_brightness': half['mean'] if half else None, 'motion_1s': round(moved(shots[0][1], one), 1) if one is not None else None})
 
 def spoken_source(F, row, path):
     """The editor's subtitles when newer than the file, otherwise Whisper's transcript when newer than the file."""

@@ -22,7 +22,7 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_SERVER = "https://csos-licence.onrender.com"   # replaced at build time by build_plugin.py
-PLUGIN_VERSION = "1.4.8"                                  # replaced at build time by build_plugin.py
+PLUGIN_VERSION = "1.5.0"                                  # replaced at build time by build_plugin.py
 MARKETPLACE = "creative-strategy-os"
 MARKETPLACE_URL = "https://github.com/tekanbidossessi-lab/creative-strategy-os.git"
 CONF_DIR = Path(os.environ.get("CSOS_HOME") or (Path.home() / ".csos"))
@@ -254,11 +254,13 @@ def forward(script_file, argv):
             args[idx] = "{WS}" + ("/" + sub if sub and sub != "." else "")
         payload = {"key": key, "device": device_id(), "script": rel, "argv": args,
                    "files": pack_dir(ws) if ws else {}, "placeholders": names_only(ws) if ws else [],
-                   "inputs": inputs, "client": "1", "plugin_version": PLUGIN_VERSION}
+                   "inputs": inputs, "client": "1", "plugin_version": PLUGIN_VERSION,
+                   "findings": findings_on(), "session": session_id()}
         ensure_auto_update()
         print(version_line(), file=sys.stderr, flush=True)
         before = digest(ws) if ws else {}
         res = call("/v1/run", payload)
+        ask_findings_once()
     except LicenceError as e:
         print(f"LICENCE : {e}", file=sys.stderr)
         return 4
@@ -316,3 +318,73 @@ def guide(skill, name):
 def status():
     ensure_auto_update()
     return call("/v1/licence", {"key": licence_key(), "device": device_id(), "plugin_version": PLUGIN_VERSION})
+
+
+# ---------- 1.4.9: findings shared with Richie, only with the buyer's yes ----------
+FINDINGS_TEXT = (
+    "Partage des constats avec Richie (facultatif) : à chaque commande, la suite lui envoie la commande, son résultat, "
+    "les erreurs et avertissements, ce qu'elle a affiché, et les faits du produit (nom, ce qui est vendu, marché, mode, "
+    "étapes, repères du compte). Jamais tes vidéos, tes clés ni tes mots de passe. Richie lit chaque constat lui-même "
+    "pour corriger et améliorer la suite. Tu peux arrêter à tout moment.")
+
+
+def findings_on():
+    return load_conf().get("findings") is True
+
+
+def set_findings(on):
+    conf = load_conf()
+    conf["findings"] = bool(on)
+    conf["findings_asked"] = True
+    save_conf(conf)
+
+
+def session_id():
+    """One work session = commands less than 3 hours apart on this computer."""
+    import time
+    import uuid
+    conf = load_conf()
+    s = conf.get("session") if isinstance(conf.get("session"), dict) else {}
+    now = int(time.time())
+    if not s.get("id") or now - int(s.get("last") or 0) > 3 * 3600:
+        s = {"id": time.strftime("%Y-%m-%d", time.localtime(now)) + "-" + uuid.uuid4().hex[:6]}
+    s["last"] = now
+    conf["session"] = s
+    try:
+        save_conf(conf)
+    except OSError:
+        pass
+    return s["id"]
+
+
+def ask_findings_once():
+    conf = load_conf()
+    if conf.get("findings") is None and not conf.get("findings_asked"):
+        print("\n" + FINDINGS_TEXT + "\nPour accepter : python csos.py licence findings on   ·   pour refuser : "
+              "python csos.py licence findings off\n(Claude : pose la question une fois à l'utilisateur, en une phrase, "
+              "puis lance la commande qu'il choisit.)", file=sys.stderr, flush=True)
+        conf["findings_asked"] = True
+        try:
+            save_conf(conf)
+        except OSError:
+            pass
+
+
+def note(text, folder=None, by="buyer", step=None):
+    """A buyer's own words, or Claude's note of the session, sent as one finding."""
+    if not findings_on():
+        raise LicenceError("le partage des constats est désactivé. Pour l'activer : python csos.py licence findings on")
+    files = {}
+    root = Path(folder).resolve() if folder else None
+    if root is None:
+        cur = Path.cwd().resolve()
+        root = next((d for d in (cur, *cur.parents) if (d / "workspace.yaml").exists()), None)
+    if root is not None:
+        for rel in ("workspace.yaml", "state.yaml", "library/benchmarks.yaml"):
+            f = root / rel
+            if f.is_file() and f.stat().st_size < 200_000:
+                files[rel] = {"text": f.read_text(encoding="utf-8", errors="replace")}
+    res = call("/v1/finding", {"key": licence_key(), "device": device_id(), "plugin_version": PLUGIN_VERSION,
+                               "findings": True, "session": session_id(), "text": str(text)[:4000], "by": by,
+                               "step": step or "", "files": files})
+    return res.get("message", "")
