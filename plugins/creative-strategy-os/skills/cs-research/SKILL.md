@@ -154,6 +154,9 @@ customers' words and the competitors' pages.
 | `references/search.md` | The plan, the browser and Apify routes, what to keep and why |
 | `references/pipeline.md` | Download, transcribe, look, frames, analyse, buying intent, with the traps met so far |
 | `references/apify.md` | Setting up Apify, what it sends, costs, failures |
+| `references/adequation-produit-marche.md` | Finding a digital product's precise problem: JTBD, voice of customer at scale (YouTube comments, coded by theme), Ulwick opportunity scores, what only a test can tell |
+| `references/force-du-sujet.md` | Measuring a topic's strength outside the Ad Library: TikTok and YouTube views (logged in), Trends with an anchor, autocomplete, then attention vs purchase |
+| `references/chariow-sellers.md` | Finding the digital products that sell on Chariow: the affiliate catalogue sorted by sales (sales counts per product), the Ad Library « mychariow » route and the Chariow domains to recognise, what doesn't work |
 | `scripts/research.py` | plan, discover, paste, import, rank, pick, reject, download, transcribe, sheet, frames, analyse, intent, hooks, check, status, log, report |
 | `scripts/checks.yaml` | The research checks (count, mix, images, long-running ads, files, transcripts, skeletons, intent, voice) |
 | `scripts/browser/tiktok_capture.js`, `tiktok_comments.js` | TikTok search results with their numbers; comments |

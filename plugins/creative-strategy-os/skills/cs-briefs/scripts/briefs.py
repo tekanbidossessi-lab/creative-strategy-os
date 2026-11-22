@@ -156,6 +156,10 @@ def blocks_of(P, b, img_base):
         t = K.cta_of(b)
         fiche['Fin (CTA)'] = f"{K.CTA[t]['label']} : {K.cta_what(t, W.load_yaml(P['workspace'], {}) or {})}"
     B.append(('fiche', [(k, str(v)) for (k, v) in fiche.items() if str(v or '').strip()]))
+    if str(b.get('role') or '').strip():
+        B += [('h2', '🎯 Le rôle de cette vidéo dans le test'), ('p', str(b['role']))]
+    if as_list(b.get('livrables')):
+        B += [('h2', '📦 Ce que tu dois produire'), ('ul', [str(x) for x in as_list(b.get('livrables'))])]
     if any((str(x).strip() for x in as_list(b.get('vision')))):
         B += [('h2', '🎬 Comprendre la vision créative')] + [('p', str(x)) for x in as_list(b.get('vision')) if str(x).strip()]
     an = b.get('ancre') if isinstance(b.get('ancre'), dict) else {}

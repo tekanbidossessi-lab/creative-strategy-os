@@ -117,6 +117,15 @@ by mobile money, opened at once: Protocole Creative IA), `webinar` (a free live 
 programme sold during or after it). The kind changes how every script ends, the objections research sorts, the
 proof a hook needs, the launch event and what the reading counts. `ws.py set <dossier> kind=digital` changes it.
 
+**Where the ads lead** (1.6): a page (the default) or a quiz that ends on the offer. When the user says the ads send
+to a quiz, a test or a questionnaire, run `intake.py quiz <dossier>`: it sets `destination: quiz` and writes
+library/quiz.yaml to fill from the quiz (who it speaks to, its questions, the profiles a result names, its info
+screens, what it gives before the offer). From then on every step sells the free test: no price, offer or guarantee
+in any ad, and every promise of an ad is checked against the quiz. **A product not online yet** (its offer decided in
+notes or a working page): `intake.py offline <dossier> --notes "…"`; the page checks wait « au montage ».
+**Fewer avatars decided** (one avatar with profiles): `ws.py set <dossier> avatars=N`; each profile is its own page
+in avatars.yaml with `profile_of: <its avatar>`.
+
 Then hand over to **cs-intake**: it reads the live page into `product.yaml` (every fact with its source
 and date), computes what one order may cost in ads (the start page shows it), audits the pixels, checks the
 account and the market against the export, and ranks the products when there are several. A plan built on

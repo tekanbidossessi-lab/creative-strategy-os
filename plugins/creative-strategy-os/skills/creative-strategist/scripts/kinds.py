@@ -108,8 +108,11 @@ DIGITAL_WORDS = [
 
 
 def cta_what(cta, ws):
-    """What a CTA type adds, in the words of the workspace's kind (a digital product has no parcel to open)."""
+    """What a CTA type adds, in the words of the workspace's kind (a digital product has no parcel to open) and of its
+    destination (an ad that leads to a quiz sells the free test)."""
     c = CTA.get(cta) or CTA["standard"]
+    if destination(ws) == "quiz" and (c.get("by_kind") or {}).get("quiz"):
+        return c["by_kind"]["quiz"]
     return (c.get("by_kind") or {}).get(kind_of(ws)) or c["what"]
 
 
@@ -134,7 +137,136 @@ def kind_of(ws):
 
 
 def profile(ws):
-    return dict(PROFILES[kind_of(ws)], kind=kind_of(ws), objections=OBJECTIONS[kind_of(ws)])
+    p = dict(PROFILES[kind_of(ws)], kind=kind_of(ws), objections=OBJECTIONS[kind_of(ws)], destination=destination(ws))
+    if p["destination"] == "quiz":
+        p.update(QUIZ_END)
+    return p
+
+
+# ------------------------------------------------------------------ where the ad leads: a page or a quiz
+# 1.6, 20/11/2026 (a digital product sold through a quiz): Richie corrected the strategy twice. The ads sell the free
+# test, never the product, its price or its offer (the offer appears at the end of the quiz only); and every promise of
+# an ad is something the quiz really gives, to someone the quiz really speaks to. workspace.yaml `destination: quiz`
+# (any kind: a physical product or a webinar can be sold through a quiz too); the quiz itself lives in library/quiz.yaml.
+
+DESTINATIONS = ("page", "quiz")
+QUIZ_END = {
+    "end_said": "« test gratuit », le temps qu'il prend (« 3 minutes ») et « fais le test » (jamais le prix ni l'offre)",
+    "end_written": "« Test gratuit · 3 min »",
+}
+QUIZ_ACTION = r"\bfais (?:le|ce|ton) (?:test|quiz)|\b(?:test|quiz)\b|\bclique\w*|\breponds?\b|\bréponds?\b|\bd[ée]couvr\w*|\ben savoir plus\b"
+QUIZ_TIME = r"\b\d+ (?:min|minutes?|questions?)\b|\b(?:une|deux|trois|quatre|cinq) minutes?\b|\[n\] (?:min|questions)"
+PRICE_WORDS = r"\b\d[\d  .]*\s?(?:f\b|fcfa|francs?|cfa|xof|€|eur|\$|usd)|\bprix\b|\bpromo\w*\b|\br[ée]duction\b|\bbonus\b|\bgarantie?\b|\brembours\w*"
+
+
+def destination(ws):
+    d = str((ws or {}).get("destination") or "page").strip().lower()
+    return d if d in DESTINATIONS else "page"
+
+
+def quiz_end(text):
+    """What the end of an ad that leads to a quiz says: {free, action, time, price} → True/False. `price` is a fault:
+    the ad sells the test, the offer waits at the end of the quiz."""
+    t = str(text or "").lower()
+    return {"free": bool(re.search(FREE, t)), "action": bool(re.search(QUIZ_ACTION, t)),
+            "time": bool(re.search(QUIZ_TIME, t)), "price": bool(re.search(PRICE_WORDS, t))}
+
+
+def quiz_of(P):
+    """library/quiz.yaml: what the quiz is (cs-intake writes it from the quiz page or its script).
+    questions: the questions asked · audience: {who, sex (homme|femme|tous), age} · profiles: the causes or profiles a
+    result can name · info: the info screens (a number, a study) · result: the blocks of the result page · gives: what
+    the person gets for free before the offer · offer_at_end: what is sold at the end. Empty dict when there is none."""
+    import yaml
+    f = Path(P["root"]) / "library" / "quiz.yaml"
+    try:
+        d = yaml.safe_load(f.read_text(encoding="utf-8")) if f.exists() else {}
+    except Exception:  # noqa: BLE001 — an unreadable quiz is no quiz
+        d = {}
+    return d if isinstance(d, dict) else {}
+
+
+def _fold(s):
+    import unicodedata
+    s = unicodedata.normalize("NFD", str(s or "").lower())
+    return "".join(c for c in s if unicodedata.category(c) != "Mn")
+
+
+_STOP = set("le la les un une des de du d l a au aux et ou en dans sur pour par avec sans ce cet cette ces ton ta tes "
+            "son sa ses mon ma mes ton tu te toi il elle on nous vous ils elles que qui quoi est es sont pas ne plus "
+            "tout tous toute toutes ca cela c j je m n s se y quand comme si mais donc car laquelle lequel quel quelle "
+            "quels quelles fait fais faire".split())
+
+
+def _stems(s):
+    return {w.rstrip("sx")[:5] for w in re.findall(r"[a-z0-9]+", _fold(s)) if len(w) > 2 and w not in _STOP}
+
+
+PROMISE = (r"\b(?:tu (?:vas |sauras|d[ée]couvr|apprend|obtiens|re[çc]ois|connaitras|connaîtras)|ce (?:test|quiz) te "
+           r"(?:dit|donne|montre|r[ée]v[eè]le|permet)|d[ée]couvr\w*|d[ée]couvre|r[ée]v[eè]le|sache|savoir)\b")
+
+
+def quiz_things(quiz):
+    """Everything the quiz gives or says, as phrases: what a promise may be checked against."""
+    out = []
+    for k in ("gives", "profiles", "result", "info", "questions"):
+        for x in quiz.get(k) or []:
+            if isinstance(x, dict):
+                out.append(" ".join(str(v) for v in x.values()))
+            elif x:
+                out.append(str(x))
+    return out
+
+
+def quiz_promises(text, quiz):
+    """The promise sentences of an ad (« tu vas découvrir… », « ce test te dit… ») that nothing in library/quiz.yaml
+    gives: a list of sentences (empty when every promise is found, or when there is no quiz.yaml to check against)."""
+    things = [_stems(t) for t in quiz_things(quiz)]
+    if not things:
+        return []
+    pool = set().union(*things)
+    bad = []
+    for s in re.split(r"(?<=[.!?…])\s+|\n+", str(text or "")):
+        if not re.search(PROMISE, re.sub(r"en savoir plus", " ", s.lower())):
+            continue
+        st = _stems(re.sub(PROMISE, " ", s.lower())) - {"test", "quiz", "gratu", "minut", "quest"}
+        if len(st) < 2:
+            continue
+        best = max(len(st & t) / len(st) for t in things)
+        if best < 0.34 and len(st & pool) / len(st) < 0.5:
+            bad.append(s.strip())
+    return bad
+
+
+WOMAN = r"\b(?:femme|epouse|elle achete|celle qui|celles qui|madame|copine|compagne|maman|mere|fille)\b"
+MAN = r"\b(?:homme|mari|celui qui|ceux qui|monsieur|copain|compagnon|papa|pere|garcon)\b"
+
+
+def avatar_sex(av):
+    """homme, femme or '' for an avatar page: its `sex` field, else its name and who it is."""
+    s = _fold(av.get("sex") or av.get("sexe") or "")
+    if s.startswith(("h", "m")):
+        return "homme"
+    if s.startswith(("f", "w")):
+        return "femme"
+    # the name says who it is before anything it mentions: « Celui dont la femme ne dit rien » is a man
+    name = _fold(av.get("name") or "").strip()
+    if re.match(r"(?:celui|ceux|l'homme|le mari|lui)\b", name):
+        return "homme"
+    if re.match(r"(?:celle|celles|la femme|l'epouse|elle)\b", name):
+        return "femme"
+    t = _fold(" ".join(str(av.get(k) or "") for k in ("name", "who", "qui", "profil")))
+    w, m = bool(re.search(WOMAN, t)), bool(re.search(MAN, t))
+    return "femme" if w and not m else ("homme" if m and not w else "")
+
+
+def quiz_welcomes(av, quiz):
+    """False when the quiz does not speak to this avatar (library/quiz.yaml → audience.sex), True otherwise."""
+    want = _fold(((quiz.get("audience") or {}) if isinstance(quiz.get("audience"), dict) else {}).get("sex") or "")
+    if not want or want.startswith("t") or want.startswith("a"):
+        return True
+    want = "homme" if want.startswith(("h", "m")) else "femme"
+    return avatar_sex(av) in ("", want)
 
 
 def objections(ws):
@@ -219,7 +351,8 @@ def event_end(text):
 # by the script. Urgency numbers stay blank ([N], [date]) until they are true.
 
 CTA = {
-    "standard": {"label": "la fin habituelle", "what": "les faits de la fin, puis l'appel direct (« commande », « inscris-toi »)"},
+    "standard": {"label": "la fin habituelle", "what": "les faits de la fin, puis l'appel direct (« commande », « inscris-toi »)",
+                 "by_kind": {"quiz": "« test gratuit », le temps qu'il prend, puis « fais le test »"}},
     "urgence": {"label": "urgence", "what": "une limite de temps ou de quantité, chiffres en blanc tant qu'ils ne sont "
                                             "pas vrais : « plus que [N] places », « jusqu'à [jour] minuit »"},
     "exclusivite": {"label": "exclusivité", "what": "pour qui c'est, et pour qui ce n'est pas : « réservé à ceux qui… », "
@@ -229,7 +362,9 @@ CTA = {
                  "by_kind": {"digital": "ce que l'acheteur ne risque pas : « remboursé sous [N] jours si ça ne te sert "
                                         "pas », « tu testes, et si tu n'apprends rien, tu es remboursé »",
                              "webinar": "ce que l'inscrit ne risque pas : « c'est gratuit », « si tu n'apprends rien, "
-                                        "tu pars »"}},
+                                        "tu pars »",
+                             "quiz": "ce que la personne ne risque pas : « c'est gratuit », « 3 minutes », « personne "
+                                     "ne voit tes réponses »"}},
     "defi": {"label": "défi", "what": "une invitation à vérifier soi-même : « je te lance un défi », « viens voir par toi-même »"},
     "mix": {"label": "urgence et exclusivité", "what": "la limite et le public visé, dans la même fin"},
 }

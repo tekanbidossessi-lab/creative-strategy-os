@@ -126,6 +126,23 @@ python CS/docs.py <dossier> --book     # deliverables/word/STRATEGIE-CREATIVE.do
 It binds the intake, the offer, the research, the strategy and the briefs: a cover, a clickable contents, a
 « Commence ici » page (what to do now, what comes next), each part on its own title page, one creative per page,
 the machine checks in an appendix. Send the .docx (editable) and the .pdf. Rebuild it after any change.
+
+**The book is written for a beginner, never for the tool** (1.7, 22/11/2026: a client found a v2 book readable only
+as the suite's checkpoints; a Plan d'Attaque layout was refused for its form: the book's structure stays). Before
+rebuilding a book, show the contents first and wait for the client's yes: `docs.py <dossier> --book --outline` prints
+the parts and their sections. In the book:
+- the order stays: Commence ici · Le point de départ · L'offre et la page · La recherche · La stratégie · Les briefs ·
+  **Le mini-cours** · Annexe (the checks written in sentences, the glossary, how to read the codes, the sources, the
+  points to decide);
+- each part opens on « À quoi sert cette partie »; tables are explained by a sentence; full sentences everywhere;
+- docs.py strips what speaks to the tool (🟡/🔴/✅ marks, rule codes R3/R29, command and file names); write the
+  deliverables so that what is left still reads well;
+- each brief opens on « Le rôle de cette vidéo dans le test » and « Ce que tu dois produire » (fields `role` and
+  `livrables`), before the why and the script;
+- **never dilute the references' crude words**: `check` flags a strong word of the reference column that vanishes
+  from the adapted column without a written reason (`changes`).
+Before delivering, go through `cs-strategy/references/checklist-stratege.md` (38 points) and tell the client the
+points you could not hold, and why.
 In the parcours complet (the default), `ws.py next` asks for it before production whenever a part is newer than the
 book; in the parcours par étape, `docs.py <dossier> BRIEFS` gives the briefs alone.
 

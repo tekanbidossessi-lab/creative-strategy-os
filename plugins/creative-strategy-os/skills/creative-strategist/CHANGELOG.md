@@ -1,5 +1,14 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.7.0 — 2026-11-22
+
+- 1.7.0 « Le livre pour un débutant » : le livre de stratégie garde sa structure et parle au lecteur, jamais à l'outil (encadré « À quoi sert cette partie », marques, codes de règle, commandes et noms de fichiers retirés) ; partie « Le mini-cours » (trois secondes, référence et avatar, natives, pourquoi la pub vend le test, lire tes chiffres avec ceux du quiz, du chiffre à la correction, boucle, variations, teste petit) ; Annexe en phrases (vérifications, points à trancher, codes, sources, glossaire) ; docs.py --book --outline pour valider le sommaire ; « Après l'achat » pour le digital, lignes d'un autre type filtrées ; briefs : rôle dans le test et ce qu'il faut produire en tête, alerte quand un mot fort de la référence disparaît ; checklist du stratège en 38 points ; téléchargement par le lien vidéo des captures, transcription relancée vidéo par vidéo en base quand la mémoire manque, images refusées par Word réenregistrées
+- Les mêmes règles pour tous les documents (lancement, lecture, variations, contrôle, gagnants, montage, bilan, page, tendance) : encadré « À quoi sert ce document », traces de l'outil retirées, contrôles écrits en phrases sous « Ce qui a été vérifié », les mots à connaître à la fin.
+
+## 1.6.0 — 2026-11-20
+
+- 1.6.0 « Pubs vers un quiz » : destination page ou quiz ; avec un quiz, chaque pub vend le test gratuit (ni prix, ni offre, ni garantie), chaque promesse est vérifiée contre library/quiz.yaml (intake.py quiz) et chaque avatar du trio doit être quelqu'un que le quiz accueille ; les profils et écrans info du quiz deviennent des angles ; 5 squelettes de pubs vers un quiz qui durent ; recherche par page d'arrivée (rank --landing quiz) et mots du quiz ; pick --id pour une pub vue en direct ; research.py voice pour importer des commentaires ; produit pas encore en ligne (intake.py offline) ; nombre d'avatars réglable (avatars=N, profile_of) ; règles du test en champs (cut_rule, avatar_fail_rule) ; briefs init garde les sources ; ws.py step --output plusieurs fichiers ; fins du rapport selon le type de produit
+
 ## 1.5.0 — 2026-11-17
 
 - 1.5.0 : partage des constats avec Richie (avec le oui de l'acheteur, base Notion relue à la main) ; tendance du compte par deux semaines (usure de l'offre, fuite au paiement, vie des gagnantes) ; leçons de la page Protocole dans l'audit de page ; ouverture d'une formation qui nomme l'acheteur ; 1-2 images noires au début = note, pas défaut

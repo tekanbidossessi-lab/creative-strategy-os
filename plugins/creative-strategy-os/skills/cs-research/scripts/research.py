@@ -25,7 +25,7 @@ Files (creative-strategist/references/workspace.md): library/research.yaml (the 
 References/<Plateforme>/<CODE>_<PAYS|LANGUE>_<nom>_<id>.<ext>, References/Transcripts/, Frames/, Analyses/, _sheets/,
 library/voice/ (comments: buying intent, objections, the customers' words), audit.yaml (the research checks).
 
-Édition sous licence : seules les commandes analyse, discover, download, frames, import, paste, sheet, transcribe tournent ici ; les autres partent sur le serveur de licence."""
+Édition sous licence : seules les commandes analyse, discover, download, frames, import, paste, sheet, transcribe, voice tournent ici ; les autres partent sur le serveur de licence."""
 import argparse
 import datetime as dt
 import json
@@ -560,6 +560,50 @@ def short_metric(c):
         s += f" · achat {c['intent']['buying']}/{c['intent']['read']}"
     return s
 
+def cmd_voice(a):
+    """1.6: the customers' words read elsewhere (a YouTube comments export in JSON, a text or Markdown file) go into
+    library/voice, the source in the file name, so the avatars' lexique can be checked against them."""
+    (P, ws, state) = open_ws(a.folder)
+    src = Path(a.file)
+    if not src.exists():
+        raise WsError(f'fichier introuvable : {src}')
+    raw = read_text(src)
+    lines = []
+    if src.suffix.lower() == '.json':
+        try:
+            data = json.loads(raw)
+        except ValueError as e:
+            raise WsError(f'{src.name} : JSON illisible ({e})')
+        TEXT_KEYS = ('text', 'textOriginal', 'textDisplay', 'comment', 'body', 't')
+
+        def walk(x, in_comments=False):
+            if isinstance(x, list):
+                for y in x:
+                    walk(y, in_comments)
+            elif isinstance(x, dict):
+                t = next((x[k] for k in TEXT_KEYS if isinstance(x.get(k), str) and x[k].strip()), '')
+                if t:
+                    likes = x.get('likes') or x.get('likeCount') or x.get('votes')
+                    lines.append(f"- {' '.join(t.split())}" + (f" ({likes} j'aime)" if likes else ''))
+                for (k, v) in x.items():
+                    if isinstance(v, (list, dict)) and k not in TEXT_KEYS:
+                        walk(v, in_comments or k in ('comments', 'replies', 'items'))
+            elif isinstance(x, str) and x.strip() and in_comments:
+                lines.append(f"- {' '.join(x.split())}")
+        walk(data, isinstance(data, list))
+    else:
+        lines = [l.rstrip() for l in raw.splitlines() if l.strip()]
+    if not lines:
+        raise WsError(f"{src.name} : aucun commentaire lu (JSON : une liste d'objets avec « text » ; sinon une ligne par commentaire)")
+    vdir = P['root'] / 'library' / 'voice'
+    vdir.mkdir(parents=True, exist_ok=True)
+    name = f'commentaires-{slug(a.source or src.stem, 40)}-{today()}.md'
+    out = vdir / name
+    out.write_text(f'# Mots des clients — {a.source or src.name}\n\n*Importé le {today()} depuis {src.name}, {len(lines)} lignes.*\n\n' + '\n'.join(lines) + '\n', encoding='utf-8')
+    journal(P, f'Mots des clients importés : {name} ({len(lines)} lignes)')
+    refresh(P, ws, state)
+    print(f'Écrit : library/voice/{name} ({len(lines)} lignes). La stratégie vérifie le lexique des avatars contre ce fichier.')
+
 def lacks_meta(r):
     """A reference imported by its link, or whose file was already there: no author, date or views yet."""
     return r.get('platform') in ('tiktok', 'instagram', 'youtube') and bool(r.get('url')) and (not (r.get('author') and (r.get('created_on') or r.get('started_on')) and r.get('views')))
@@ -600,6 +644,15 @@ def fetch_file(url, dest, referer=None):
         Path(dest).unlink(missing_ok=True)
         raise ValueError("le fichier reçu n'est ni une image ni une vidéo")
 
+def _try_fetch(url, dest):
+    """The capture's own media link, tried once: True when a readable file came, False otherwise (expired link)."""
+    try:
+        fetch_file(url, dest, referer='https://www.facebook.com/')
+        return True
+    except Exception:
+        Path(dest).unlink(missing_ok=True)
+        return False
+
 def cmd_download(a):
     (P, ws, state) = open_ws(a.folder)
     F = files(P)
@@ -627,6 +680,8 @@ def cmd_download(a):
                     fetch_file(u, sub / f'{base}_{i}.jpg', referer='https://www.tiktok.com/' if r['platform'] == 'tiktok' else None)
             elif not got and r.get('format') == 'image' and r.get('image_url'):
                 fetch_file(r['image_url'], sub / f'{base}.jpg')
+            elif not got and r.get('platform') == 'adlib' and r.get('media_url') and (r.get('format') != 'image') and _try_fetch(r['media_url'], sub / f'{base}.mp4'):
+                pass
             elif not got and have_ytdlp and r.get('url'):
                 (code, last) = ytdlp(r['url'], str(sub / f'{base}.%(ext)s'))
                 if code != 0 or not media_files(P, r):
@@ -830,6 +885,15 @@ def cmd_transcribe(a):
                 print(f"  {r['code']} : échec ({type(e).__name__}) ; relance plus tard, les autres continuent")
                 break
         if model is None:
+            rest = [x['code'] for x in todo[todo.index(r):]]
+            if not os.environ.get('CSOS_TRANSCRIBE_CHILD') and P.get('root'):
+                print(f'  la mémoire ne suffit plus pour ce processus : les {len(rest)} vidéo(s) restante(s) passent une par une, chacune dans son propre processus, en modèle « base »', flush=True)
+                env = dict(os.environ, CSOS_TRANSCRIBE_CHILD='1')
+                for code in rest:
+                    subprocess.run([sys.executable, str(Path(__file__).resolve()), 'transcribe', str(P['root']), code, '--model', 'base'], env=env)
+                data = load_list(F['refs'], 'references')
+                done += sum((1 for x in data['references'] if isinstance(x, dict) and x.get('code') in rest and x.get('transcript')))
+                break
             left = len(todo) - done - 1
             print(f"  {r['code']} : la mémoire de cet ordinateur ne suffit plus. Arrêt : {done} transcrite(s), {left} restante(s). Ferme le navigateur et les applications lourdes, puis relance research.py transcribe (les finies sont gardées).")
             break
@@ -1285,6 +1349,7 @@ def build_parser():
     p.add_argument('folder')
     p.add_argument('--platform', choices=tuple(PLATFORMS))
     p.add_argument('--top', type=int, default=20)
+    p.add_argument('--landing', choices=('quiz',), help="seulement les pubs dont la page d'arrivée est un quiz")
     p = sub.add_parser('pick')
     p.add_argument('folder')
     p.add_argument('ids', nargs='*')
@@ -1293,6 +1358,15 @@ def build_parser():
     p.add_argument('--adlib', type=int)
     p.add_argument('--tiktok', type=int)
     p.add_argument('--instagram', type=int)
+    p.add_argument('--id', nargs='+', help="l'id d'une pub vue en direct dans la Bibliothèque (téléchargée par yt-dlp)")
+    p.add_argument('--author', help="avec --id : l'annonceur")
+    p.add_argument('--text', help='avec --id : le texte de la pub')
+    p.add_argument('--country', help='avec --id : le pays (code)')
+    p.add_argument('--started', help='avec --id : la date de début de diffusion (AAAA-MM-JJ)')
+    p = sub.add_parser('voice')
+    p.add_argument('folder')
+    p.add_argument('file', help='commentaires : JSON (YouTube…), .txt ou .md')
+    p.add_argument('--source', help="d'où viennent ces mots (« youtube durer au lit ») : va dans le nom du fichier")
     p = sub.add_parser('reject')
     p.add_argument('folder')
     p.add_argument('ids', nargs='+')
@@ -1346,7 +1420,7 @@ def _forward(a):
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
-    cmds = {'discover': cmd_discover, 'paste': cmd_paste, 'import': cmd_import, 'download': cmd_download, 'transcribe': cmd_transcribe, 'sheet': cmd_sheet, 'frames': cmd_frames, 'analyse': cmd_analyse}
+    cmds = {'discover': cmd_discover, 'paste': cmd_paste, 'import': cmd_import, 'download': cmd_download, 'transcribe': cmd_transcribe, 'sheet': cmd_sheet, 'frames': cmd_frames, 'analyse': cmd_analyse, 'voice': cmd_voice}
     try:
         cmds.get(a.cmd, _forward)(a)
     except WsError as e:

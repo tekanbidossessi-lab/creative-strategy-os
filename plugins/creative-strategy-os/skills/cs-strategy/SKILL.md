@@ -107,7 +107,9 @@ python S/strategy.py report <dossier> --done
 - « Après le test » : concept = ADN (avatar, désir, niveau de conscience) × angle × format; a winner proves its
   combination, the next cycle keeps it and changes one variable at a time; one line per creative;
 - the checks.
-`--done` closes the step only with 0 errors. For an Accélérateur client, `strategy.py export <dossier>` gives the
+`--done` closes the step only with 0 errors. Before handing the strategy over, go through
+`references/checklist-stratege.md` (38 points: the reader, the research, the funnel and the offer, the scripts, the
+test, the production, the document) and say which points could not be held. For an Accélérateur client, `strategy.py export <dossier>` gives the
 plan.yaml parts for pca-plan-attaque. Then the briefs: cs-briefs once it is built; until then, pca-plan-attaque's
 briefs from the export.
 
@@ -135,6 +137,7 @@ briefs from the export.
 | `references/avatars.md` | Where avatars come from, the page fields, the awareness levels, the traps |
 | `references/ranking.md` | The matrix out of 30, the trio and the reserve, the test structure |
 | `references/system.md` | The angle map, the fields of each creative, the mix, the closing commands |
+| `references/checklist-stratege.md` | The strategist's 38 points to pass before delivering a strategy and its book (1.7) |
 | `references/retargeting.md` | Retargeting a warm audience: one video per hesitation, one body with 2–4 hooks (Gadzhi's 18 open-cart videos, transcribed) |
 | `scripts/strategy.py` | inputs, init, score, check, ledger, export, report |
 | `scripts/checks.yaml` | The strategy checks |

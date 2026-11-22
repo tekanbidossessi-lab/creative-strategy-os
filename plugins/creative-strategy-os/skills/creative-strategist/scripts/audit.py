@@ -33,6 +33,9 @@ def applies(check, ws):
         kinds = cond["kind"] if isinstance(cond["kind"], list) else [cond["kind"]]
         if (ws.get("kind") or "product") not in kinds:
             return False
+    # where the ads lead (1.6): `destination: quiz`; absent = every destination
+    if "destination" in cond and str(ws.get("destination") or "page") != cond["destination"]:
+        return False
     if "stage" in cond and ws.get("stage") != cond["stage"]:
         return False
     if cond.get("payment") == "cod":

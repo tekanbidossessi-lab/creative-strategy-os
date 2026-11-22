@@ -22,7 +22,7 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_SERVER = "https://csos-licence.onrender.com"   # replaced at build time by build_plugin.py
-PLUGIN_VERSION = "1.5.0"                                  # replaced at build time by build_plugin.py
+PLUGIN_VERSION = "1.7.0"                                  # replaced at build time by build_plugin.py
 MARKETPLACE = "creative-strategy-os"
 MARKETPLACE_URL = "https://github.com/tekanbidossessi-lab/creative-strategy-os.git"
 CONF_DIR = Path(os.environ.get("CSOS_HOME") or (Path.home() / ".csos"))
@@ -132,8 +132,6 @@ def _call(path, payload):
                 raw = gzip.decompress(raw)
             return json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as e:
-        if e.code in (502, 503, 504):
-            raise _Waking()
         try:
             raw = e.read()
             if e.headers.get("Content-Encoding") == "gzip":
@@ -141,6 +139,10 @@ def _call(path, payload):
             msg = json.loads(raw.decode("utf-8")).get("error")
         except Exception:
             msg = None
+        # 17/11/2026: a 503 that carries the server's own message (Chariow key refused, Chariow down) is not a server
+        # waking up: say it, instead of retrying a minute and blaming the wake-up
+        if e.code in (502, 503, 504) and not msg:
+            raise _Waking()
         raise LicenceError(msg or f"le serveur de licence a répondu {e.code}.")
     except (urllib.error.URLError, TimeoutError, OSError):
         raise LicenceError("le serveur de licence est injoignable (pas de réseau ?). Les commandes locales "

@@ -120,7 +120,222 @@ TEXT = {
                               "reading the results and the variations."}},
 }
 BOOK_PARTS = ("FICHE-ENTREE", "OFFRE", "RECHERCHE", "STRATEGIE", "BRIEFS")
+
+# 1.7 (22/11/2026): a book read only as the suite's checkpoints was refused. Each part opens on what it is for, in the
+# reader's words; the tool's marks go; the mini-course and an appendix written in sentences close the book.
+PURPOSE = {
+    "FICHE-ENTREE": "Poser les faits avant de parler de pub : ce que tu vends, à quel prix, par quel chemin l'argent "
+                    "arrive, combien une {result} peut coûter en publicité, et si le suivi des achats marche.",
+    "OFFRE": "Comparer ton offre à celles qui vendent déjà sur ton marché, dire ce qu'on change sur la page, et donner "
+             "le texte qui accompagne chaque pub.",
+    "OFFRE_quiz": "Comparer ton offre à celles qui vendent déjà sur ton marché, montrer le quiz écran par écran (c'est "
+                  "lui qui vend), et donner le texte qui accompagne chaque pub.",
+    "RECHERCHE": "Montrer ce qui marche déjà sur ton marché : comment on a cherché, les pubs qui tournent depuis "
+                 "longtemps, ce qu'elles ont en commun, et les mots de tes clients, tels qu'ils les écrivent.",
+    "STRATEGIE": "Dire à qui on parle, avec quels angles, et pourquoi ces dix vidéos-là : les avatars, le choix des "
+                 "trois testés, le système des vidéos, le test et ce qu'on fera des gagnantes.",
+    "BRIEFS": "Donner, pour chaque vidéo, tout ce qu'il faut pour la produire seul à 23 h : son rôle dans le test, ce "
+              "qu'il faut produire, le script à côté de la référence, la production plan par plan.",
+}
+PURPOSE.update({
+    "PRODUCTION": "Suivre la fabrication des vidéos : qui produit quoi, pour quand, ce qui est livré et ce qui est en "
+                  "retard.",
+    "CONTROLE": "Vérifier chaque vidéo produite avant qu'un franc de pub ne soit dépensé dessus : l'ouverture, les mots, "
+                "la fin, le son, le format. Une vidéo à reprendre dit exactement quoi corriger.",
+    "LANCEMENT": "Mettre la campagne de test en ligne sans te tromper : la structure, les noms, le budget, le texte de "
+                 "chaque pub, et ce qu'il faut regarder pendant les sept premiers jours.",
+    "LECTURE": "Lire les résultats du test et décider pour chaque pub : la garder, la couper, la corriger ou la décliner, "
+               "avec la raison écrite à côté de chaque décision.",
+    "GAGNANTS": "Garder la mémoire de ce qui a gagné, cycle après cycle : ce qui compose chaque gagnante et ce qu'on "
+                "change ensuite pour la faire durer.",
+    "VARIATIONS": "Préparer le cycle suivant : les déclinaisons des gagnantes, chacune avec la seule chose qu'elle "
+                  "change, et les nouvelles idées.",
+    "MONTAGE": "Monter chaque vidéo toi-même à partir de clips : l'ouverture plan par plan, puis le reste à ton choix.",
+    "BILAN": "Voir l'histoire du produit d'un coup d'œil : ce que chaque cycle a testé, ce qui a gagné, et les repères "
+             "de ton compte.",
+    "CONCURRENTS": "Voir ce que vendent les concurrents, à quel prix, avec quelles promesses, et depuis combien de temps "
+                   "leurs pubs tournent.",
+    "PAGE": "Écrire la page à partir d'une page qui vend déjà, section par section, avec chaque changement montré.",
+    "TENDANCE": "Voir comment ton compte évolue, deux semaines par deux semaines : ce qui s'use, où les acheteurs "
+                "décrochent, et combien de temps vit une gagnante.",
+})
+RESULT_WORD = {"product": ("commande", "commandes"), "digital": ("vente", "ventes"), "webinar": ("inscription", "inscriptions")}
+STATE_WORD = {"✅": "tenu", "🟡": "à revoir", "⚠️": "à revoir", "🔴": "à corriger", "❌": "à corriger", "⬜": "à vérifier",
+              "❔": "à vérifier", "➖": "sans objet"}
+# what speaks to the tool, not to the reader: the status marks, rule codes, commands, file names, skill names
+_MARKS = re.compile(r"[🟡🔴✅⬜❔➖🟢]|⚠️|❌")
+_RULES = re.compile(r"\s*\((?:R\d+[a-z]?(?:\s*[,/et]+\s*R\d+[a-z]?)*(?:\s*:[^)]*)?)\)|\bR\d+[a-z]?\s*:\s*")
+_TOOLISH = (r"[\w./-]*\.(?:py|ya?ml|json|md|js)\b|\bcs-(?:intake|offer|research|strategy|briefs|review|launch|read|iterate)\b|"
+            r"\bcreative-strategist\b|\breferences/[\w./-]+|\blibrary/[\w./-]+|\bdeliverables/[\w./-]+|--[a-z][\w-]*")
+_PAREN_TOOL = re.compile(r"\s*\((?:[^()]*?(?:" + _TOOLISH + r"))[^()]*\)")
+_CODE_TOOL = re.compile(r"`[^`]*(?:" + _TOOLISH + r"|\b(?:ws|docs|research|strategy|briefs|offer|intake|launch|read|review|iterate)"
+                        r"\.py\b)[^`]*`")
+_OTHER_KIND = {"digital": re.compile(r"livraison|livreur|colis|\bGNF\b|formulaire à la livraison|appel de confirmation", re.I)}
 CHECKLIST = re.compile(r"^(la liste de contr[ôo]le|the checklist of checks|checks)$", re.I)
+
+
+def std_jpeg(p):
+    """The image as python-docx can read it. Some frames written by ffmpeg are refused by python-docx (22/11/2026):
+    those are saved again as a standard JPEG next to a temp folder, and that copy goes into the document."""
+    p = Path(p)
+    try:
+        from docx.image.image import Image as _DocxImage
+        _DocxImage.from_file(str(p))
+        return str(p)
+    except Exception:  # noqa: BLE001 — anything python-docx refuses gets a standard copy
+        pass
+    try:
+        import tempfile
+        from PIL import Image
+        out = Path(tempfile.gettempdir()) / "csos-images" / (p.stem + "-std.jpg")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(p) as im:
+            im.convert("RGB").save(out, "JPEG", quality=88)
+        return str(out)
+    except Exception:  # noqa: BLE001 — the caller writes « image illisible »
+        return str(p)
+
+
+BARE_FILES = {"product.yaml": "la fiche du produit", "workspace.yaml": "les réglages du produit",
+              "library/competitors.yaml": "les pages des concurrents", "library/voice": "les mots des clients",
+              "library/quiz.yaml": "la description du quiz", "strategy.yaml": "la stratégie"}
+
+
+def reader_text(t):
+    """A line for the reader: the tool's marks, rule codes, commands and file names taken out (1.7)."""
+    t = str(t)
+    lead = re.match(r"^\s*(✅|🟡|⚠️|🔴|❌|⬜|❔|➖)\s*", t)
+    state = STATE_WORD.get(lead.group(1)) if lead else None
+    for k, v in BARE_FILES.items():
+        t = t.replace(k, v)
+    t = _CODE_TOOL.sub("", t)
+    t = _PAREN_TOOL.sub("", t)
+    # a command or a capture script named in the open (« research.py paste », « browser/fb_comments.js »)
+    t = re.sub(r"\b(?:[\w/-]+\.js|[a-z_]+\.py(?: [a-z-]+)?)\b", "l'outil de la suite", t)
+    t = _RULES.sub(" ", t)
+    t = _MARKS.sub("", t)
+    t = re.sub(r"\s+([,.)])", r"\1", re.sub(r"\(\s*\)", "", t))   # French keeps its space before ; and :
+    t = re.sub(r"[ \t]{2,}", " ", t).strip()
+    if state and state not in ("tenu", "sans objet") and t:
+        t = re.sub(r"^(\*\*[^*]+?)(\.?)\*\*", lambda m: f"{m.group(1)}** ({state}){m.group(2)}", t, count=1) \
+            if t.startswith("**") else f"({state}) {t}"
+    return t
+
+
+def reader_blocks(blocks, ws=None):
+    """The blocks of a book part, for the reader: every text cleaned; in « À faire » and « Ensuite », the lines that
+    belong to another kind of product (a delivery for a digital product) dropped."""
+    kind = str((ws or {}).get("kind") or "product")
+    other = _OTHER_KIND.get(kind)
+    out, in_todo = [], False
+    for k, x in blocks:
+        if k == "h":
+            lvl, txt = x[0], x[1]
+            in_todo = bool(re.match(r"(à faire|ensuite)", txt.strip(), re.I))
+            out.append(("h", (lvl, reader_text(txt)) + tuple(x[2:])))
+        elif k in ("p", "ul", "ul2", "ol", "check"):
+            if in_todo and other and other.search(str(x)):
+                continue
+            t = reader_text(x)
+            if t:
+                out.append((k, t))
+        elif k == "quote":
+            out.append((k, [reader_text(y) for y in x if reader_text(y)]))
+        elif k == "table":
+            out.append((k, [reader_text(row) if not re.match(r"^\|[\s:|-]+\|?$", row.strip()) else row for row in x]))
+        else:
+            out.append((k, x))
+    return out
+
+
+def kind_block(text, ws):
+    """A bookparts text for this workspace: the quiz or page lines kept by destination, the kind's words put in."""
+    dest = str((ws or {}).get("destination") or "page")
+    for tag in ("quiz", "page"):
+        keep = dest == tag
+        text = re.sub(r"<!-- " + tag + r" -->\n?(.*?)<!-- /" + tag + r" -->\n?", (lambda m: m.group(1)) if keep else "",
+                      text, flags=re.S)
+    text = re.sub(r"<!--.*?-->\n?", "", text, flags=re.S)
+    one, many = RESULT_WORD.get(str((ws or {}).get("kind") or "product"), RESULT_WORD["product"])
+    return text.replace("{results}", many).replace("{result}", one)
+
+
+def purpose_block(part, ws, label="À quoi sert cette partie"):
+    one, _ = RESULT_WORD.get(str((ws or {}).get("kind") or "product"), RESULT_WORD["product"])
+    key = part + "_quiz" if part == "OFFRE" and (ws or {}).get("destination") == "quiz" else part
+    txt = PURPOSE.get(key) or PURPOSE.get(part)
+    return [("quote", [f"**{label}** : {txt.replace('{result}', one)}"])] if txt else []
+
+
+def course_blocks(ws):
+    """The part « Le mini-cours » (bookparts.MINI_COURS), its own title line left out."""
+    import bookparts
+    b = parse(kind_block(bookparts.MINI_COURS, ws))
+    return [x for x in b if not (x[0] == "h" and x[1][0] == 1)]
+
+
+def checks_sentences(checks):
+    """A checklist section as sentences: (blocks, open points). What holds is summed up; what stays open is listed
+    with its state in words (à revoir, à corriger, à vérifier)."""
+    ok, todo = [], []
+    for k, x in checks:
+        if k not in ("ul", "ol", "check", "p"):
+            continue
+        raw = str(x)
+        lead = re.match(r"^\s*(✅|🟡|⚠️|🔴|❌|⬜|❔|➖)", raw)
+        state = STATE_WORD.get(lead.group(1)) if lead else None
+        label = re.sub(r"\*\*", "", reader_text(re.sub(r"^\s*(✅|🟡|⚠️|🔴|❌|⬜|❔|➖)\s*", "", raw)))
+        label = re.sub(r"\s*\((?:à revoir|à corriger|à vérifier)\)", "", label)
+        if not label or state == "sans objet":
+            continue
+        (ok if state == "tenu" else todo).append((state or "à vérifier", label))
+    pl = lambda n, w: f"{n} {w}{'s' if n > 1 else ''}"
+    sent = []
+    if ok:
+        sent.append(f"{pl(len(ok), 'point')} vérifié{'s' if len(ok) > 1 else ''} et tenu{'s' if len(ok) > 1 else ''}, "
+                    "notamment : " + " ; ".join(l.split(" — ")[0].rstrip(".") for _, l in ok[:4]) + ".")
+    if todo:
+        sent.append(f"{pl(len(todo), 'point')} reste{'nt' if len(todo) > 1 else ''} ouvert{'s' if len(todo) > 1 else ''} :")
+    out = [("p", " ".join(sent) or "Rien à signaler.")] + [("ul", f"{l.rstrip('.')} ({st}).") for st, l in todo]
+    return out, todo
+
+
+def annex_blocks(appendix, P, ws):
+    """The appendix in sentences (1.7): per part, what was checked and holds, what stays open; then the points to
+    decide, how to read the codes, the sources and the glossary."""
+    import bookparts
+    out, open_points = [], []
+    out.append(("p", "Avant de te livrer ce document, chaque partie a été relue point par point. Voici, partie par "
+                     "partie, ce qui a été vérifié, comment, et ce qui reste ouvert."))
+    for ptitle, checks in appendix:
+        blocks, todo = checks_sentences(checks)
+        out += [("h", (2, ptitle))] + blocks
+        open_points += [(ptitle, st, l) for st, l in todo]
+    if open_points:
+        out += [("h", (2, "Les points à trancher")),
+                ("p", "Ces points demandent une décision ou une vérification de ta part avant le lancement. Chacun dit "
+                      "dans quelle partie il se trouve.")]
+        out += [("ul", f"**{pt}** : {l.rstrip('.')} ({st}).") for pt, st, l in open_points[:20]]
+    out += [("h", (2, "Comment lire les codes")),
+            ("p", "Chaque vidéo a un code. **C01** est la première idée du cycle ; **V1** est sa première version ; **A** est "
+                  "sa première ouverture (B et C sont d'autres ouvertures du même corps). « C01 V1 A » est donc le nom du "
+                  "fichier et de la pub dans le Gestionnaire de publicités. Les références de la recherche ont aussi un "
+                  "code : **AL** pour une pub de la Bibliothèque publicitaire de Meta, **TT** pour une vidéo TikTok, **IG** "
+                  "pour Instagram, **YT** pour YouTube, **CL** pour une pub à toi, **CO** pour un concurrent.")]
+    n_refs = 0
+    try:
+        data = W.load_yaml(P["refs_index"], {}) or {}
+        n_refs = len([r for r in data.get("references") or [] if isinstance(r, dict)])
+    except Exception:  # noqa: BLE001 — no references file, no count
+        pass
+    out += [("h", (2, "Les sources")),
+            ("p", ("Ce document repose sur " + (f"{n_refs} pubs et vidéos de référence, " if n_refs else "")
+                   + "chacune avec son lien dans la partie La recherche, sur la page de ton produit lue telle qu'elle est en "
+                     "ligne, sur les pages des concurrents, et sur les commentaires de clients recopiés avec leurs fautes. "
+                     "Chaque chiffre cité dit d'où il vient."))]
+    gl = parse(kind_block(bookparts.GLOSSAIRE, ws))
+    out += [("h", (2, "Le glossaire"))] + [x for x in gl if not (x[0] == "h" and x[1][0] == 1)]
+    return out
 
 
 def brand_of(ws):
@@ -481,7 +696,7 @@ class Writer:
             from PIL import Image
             with Image.open(p) as im:
                 w_, h_ = im.size
-            self.doc.add_picture(str(p), width=self.Cm(5 if h_ > w_ else 12))
+            self.doc.add_picture(std_jpeg(p), width=self.Cm(5 if h_ > w_ else 12))
         except Exception:
             self.doc.add_paragraph().add_run(f"[image illisible : {p.name}]").italic = True
             return
@@ -505,7 +720,7 @@ class Writer:
             par = c.paragraphs[0]
             if p.exists():
                 try:
-                    par.add_run().add_picture(str(p), width=self.Cm(3.6))
+                    par.add_run().add_picture(std_jpeg(p), width=self.Cm(3.6))
                 except Exception:
                     par.add_run(f"[image illisible : {p.name}]").italic = True
             else:
@@ -708,13 +923,30 @@ DOC_KIND = {"fr": {"FICHE-ENTREE": "Le point de départ", "OFFRE": "L'offre et l
                    "CONCURRENTS": "The market and the competitors", "PAGE": "The page, written as a brief"}}
 
 
-def build(md_path, out, brand, title_hint="", lang="fr", cover=None):
+def reader_doc(blocks, stem, ws):
+    """A step document for the reader (Richie, 22/11/2026: the book's rules for every document): what it is for first,
+    the tool's marks out, the checks written in sentences under « Ce qui a été vérifié », the glossary at the end."""
+    import bookparts
+    body, checks = split_checks(blocks)
+    first = next((i for i, (k, x) in enumerate(body) if k == "h" and x[0] == 1), None)
+    head, rest = (body[:first + 1], body[first + 1:]) if first is not None else ([], body)
+    out = head + purpose_block(stem.upper(), ws, "À quoi sert ce document") + reader_blocks(rest, ws)
+    if checks:
+        out += [("h", (2, "Ce qui a été vérifié"))] + checks_sentences(checks)[0]
+    gl = parse(kind_block(bookparts.GLOSSAIRE, ws))
+    out += [("h", (2, "Les mots à connaître"))] + [x for x in gl if not (x[0] == "h" and x[1][0] == 1)]
+    return out
+
+
+def build(md_path, out, brand, title_hint="", lang="fr", cover=None, ws=None):
     """One deliverable as a Word document. cover = (kind, title, subtitle, meta): the strategy book's cover page and
     clickable contents come first (the document's own first title goes onto the cover); None = the text alone."""
     md_path = Path(md_path)
     w = Writer(brand, lang, title_hint or md_path.stem, md_path.parent,
                red_bold=md_path.stem.upper().startswith("BRIEFS"))
     blocks = parse(read_text(md_path))
+    if ws is not None and lang == "fr":
+        blocks = reader_doc(blocks, md_path.stem, ws)
     if cover:
         kind, title, sub, meta = cover
         first = next((i for i, (k, x) in enumerate(blocks) if k == "h"), None)
@@ -799,7 +1031,7 @@ def part_file(src, part):
     return next((src / f"{n}.md" for n in PAGE_BRIEFS if (src / f"{n}.md").exists()), f)
 
 
-def build_book(P, ws, out, names=None):
+def build_book(P, ws, out, names=None, outline=False):
     lang = lang_of(ws)
     T = TEXT[lang]
     src = P["root"] / "deliverables"
@@ -823,6 +1055,8 @@ def build_book(P, ws, out, names=None):
     parts, entries, appendix = [], [(1, T["start"], "start")], []
     for n, part in enumerate(found, 1):
         body, checks = split_checks(parse(read_text(part_file(src, part))))
+        if lang == "fr":
+            body = purpose_block(part, ws) + reader_blocks(body, ws)
         blocks, toc = part_blocks(part, body, n)
         ptitle, psub = T["parts"][part]
         parts.append((n, part, ptitle, psub, blocks))
@@ -830,8 +1064,17 @@ def build_book(P, ws, out, names=None):
         entries.extend(toc)
         if checks:
             appendix.append((ptitle, checks))
-    if appendix:
-        entries.append((1, f"{T['appendix']} · {T['checks']}", "annexe"))
+    course = course_blocks(ws) if lang == "fr" and "BRIEFS" in found else []
+    if course:
+        n = len(parts) + 1
+        cblocks, ctoc = part_blocks("COURS", [("h", (1, "Le mini-cours"))] + course, n)
+        parts.append((n, "COURS", "Le mini-cours", "Lire tes chiffres, corriger une pub, faire les suivantes seul.", cblocks))
+        entries.append((1, f"{n}. Le mini-cours", f"p{n}"))
+        entries.extend(ctoc)
+    if appendix or lang == "fr":
+        entries.append((1, T["appendix"] if lang == "fr" else f"{T['appendix']} · {T['checks']}", "annexe"))
+    if outline:
+        return entries
     w.toc(entries)
 
     w.page_break()
@@ -859,7 +1102,10 @@ def build_book(P, ws, out, names=None):
         w.red_bold = part == "BRIEFS"
         w.render(blocks)
     w.red_bold = False
-    if appendix:
+    if lang == "fr":
+        w.part_page(len(parts) + 1, T["appendix"], "Les vérifications, le glossaire, les codes, les sources", "annexe")
+        w.render(annex_blocks(appendix, P, ws))
+    elif appendix:
         w.part_page(len(parts) + 1, T["checks"], T["appendix"], "annexe")
         w.inline(w.doc.add_paragraph(), T["checks_lead"])
         for ptitle, checks in appendix:
@@ -918,6 +1164,7 @@ def main(argv=None):
     ap.add_argument("--book", action="store_true", help="relier entrée, offre, recherche, stratégie et briefs en un document")
     ap.add_argument("--no-pdf", action="store_true")
     ap.add_argument("--plain", action="store_true", help="sans couverture ni sommaire (le texte seul)")
+    ap.add_argument("--outline", action="store_true", help="avec --book : montrer le sommaire à valider, sans rien relier")
     a = ap.parse_args(argv)
     try:
         P, ws, state = open_ws(a.folder)
@@ -925,6 +1172,13 @@ def main(argv=None):
         out_dir = src / "word"
         lang = lang_of(ws)
         want = {n.upper().removesuffix(".MD") for n in a.names}
+        if a.book and a.outline:
+            # 1.7: the client validates the contents before a book is rebuilt
+            print("Le sommaire du livre, à valider avant de le relier :")
+            for lvl, txt, _ in build_book(P, ws, out_dir / "x.docx", want or None, outline=True):
+                print(("  " if lvl == 1 else "      - ") + txt)
+            print("Quand le client dit oui : docs.py <dossier> --book")
+            return
         if a.book:
             out = out_dir / f"{TEXT[lang]['book']}.docx"
             mark = out_dir / ".book-cycle"   # the cycle the current book belongs to
@@ -973,7 +1227,7 @@ def main(argv=None):
             out = out_dir / f"{m.stem}.docx"
             try:
                 build(m, out, brand, f"{ws.get('name')} · {m.stem.replace('-', ' ').title()}", lang,
-                      cover=None if a.plain else cover_of(P, ws, m.stem, lang))
+                      cover=None if a.plain else cover_of(P, ws, m.stem, lang), ws=ws)
             except PermissionError:
                 raise WsError(f"{out.name} est ouvert dans Word : ferme-le et relance")
             made.append(out)

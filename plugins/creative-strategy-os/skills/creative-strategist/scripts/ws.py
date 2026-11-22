@@ -13,7 +13,7 @@
     python ws.py cycle  <dossier> [--from briefs|strategy|research]   ouvrir le cycle de test suivant
     python ws.py code   <dossier> <AL|TT|IG|YT|CL|CO|C>   réserver le prochain code libre (CO = concurrent)
     python ws.py log    <dossier> "texte"   ajouter une ligne datée au journal
-    python ws.py set    <dossier> clé=valeur   mode, stage, programme, kind, path, channels, goal, budget_daily, team,
+    python ws.py set    <dossier> clé=valeur   mode, stage, programme, kind, path, destination (page|quiz), avatars (1–5), channels, goal, budget_daily, team,
                                                capacity.machine, capacity.claude, accounts.*, brand.*, engines.<tâche>
     python ws.py overview [<dossier racine>]   tous les produits du dossier : où chacun en est, quoi faire aujourd'hui
     python ws.py bilan  <dossier>        l'historique du produit, cycle par cycle (deliverables/BILAN.md)
@@ -310,8 +310,10 @@ def missing_facts(ws, product):
     out = []
     src = product.get("source") if isinstance(product.get("source"), dict) else {}
     live = (ws or {}).get("kind") == "webinar"
-    if not src.get("url"):
-        out.append("product.yaml : l'adresse de la page " + ("d'inscription au live" if live else "produit") + " (source.url)")
+    # 1.6: a product not yet online has its offer in notes or a working page (source.notes, source.online: false)
+    if not src.get("url") and not (src.get("online") is False and (src.get("notes") or src.get("page"))):
+        out.append("product.yaml : l'adresse de la page " + ("d'inscription au live" if live else "produit") + " (source.url ; "
+                   "pas encore en ligne : source.online: false et source.notes, la page de travail où l'offre est décidée)")
     if not product.get("offers"):
         out.append("product.yaml : " + ("le prix du programme vendu pendant le live" if live else "le prix et l'offre")
                    + ", par marché (offers)")
@@ -338,6 +340,7 @@ def breakeven(product, ws=None):
 
 
 PATHS = ("full", "stage")
+DESTINATIONS = ("page", "quiz")   # where the ads lead (1.6): a page, or a quiz that ends on the offer
 PATH_FR = {"full": "parcours complet", "stage": "parcours par étape"}
 BOOK_STEPS = ("intake", "offer", "research", "strategy", "briefs")
 BOOK_LABELS = {"intake": "Le point de départ", "offer": "L'offre et la page", "research": "La recherche",
@@ -406,6 +409,7 @@ def write_start_page(P, ws, product, state):
              f"Formule **{ws.get('mode')}** · produit **{'neuf' if ws.get('stage') == 'new' else 'avec historique'}**"
              f" · programme **{ws.get('programme')}**"
              + (f" · type **{ws.get('kind')}**" if ws.get("kind", "product") != "product" else "")
+             + (" · les pubs mènent à un **quiz**" if ws.get("destination") == "quiz" else "")
              + f" · cycle **{state['cycle']}**"
              f" · machine **{cap.get('machine', 'own-pc')}** · Claude **{cap.get('claude', 'pro')}**", "",
              "## La prochaine action", "", state["next"], ""]
@@ -599,8 +603,8 @@ def validate(P, ws, state):
     if ws.get("format") not in (None, FORMAT):
         errors.append(f"workspace.yaml : format {ws.get('format')} inconnu (attendu {FORMAT})")
     for key, allowed in (("mode", MODES), ("stage", STAGES), ("programme", PROGRAMMES), ("kind", KINDS),
-                         ("path", PATHS)):
-        if key in ("kind", "path") and key not in ws:  # absent = product (before 1.2), full path (before 1.3.2)
+                         ("path", PATHS), ("destination", DESTINATIONS)):
+        if key in ("kind", "path", "destination") and key not in ws:  # absent = product (before 1.2), full path (before 1.3.2)
             continue
         if ws.get(key) not in allowed:
             errors.append(f"workspace.yaml : {key} « {ws.get(key)} » inconnu ({', '.join(allowed)})")
@@ -1150,7 +1154,7 @@ def cmd_log(a):
 
 
 SETTABLE = {"mode": MODES, "stage": STAGES, "programme": PROGRAMMES, "kind": KINDS, "path": PATHS,
-            "name": None, "business": None,
+            "destination": DESTINATIONS, "avatars": None, "name": None, "business": None,
             "language": None, "goal": None, "budget_daily": None, "team": None}
 
 
@@ -1618,7 +1622,7 @@ def build_parser():
     p.add_argument("folder")
     p.add_argument("step")
     p.add_argument("status")
-    p.add_argument("--output", action="append")
+    p.add_argument("--output", action="extend", nargs="+")   # 1.6: --output a b, or --output a --output b
     p.add_argument("--note")
     p = sub.add_parser("start")
     p.add_argument("folder")

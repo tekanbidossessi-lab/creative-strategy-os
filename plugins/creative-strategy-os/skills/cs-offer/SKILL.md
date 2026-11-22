@@ -158,6 +158,7 @@ Then: the references (cs-research) and the strategy (cs-strategy). The page fixe
 | `CS/browser/page_grab.js` | Read a whole page in the built-in browser when a download fails (clipboard, like COPIER) |
 | `references/vsl.md` | The sales video taken apart (Djokoinfluent, 10 min), the 12-step rule, a plan to make one |
 | `references/pages-qui-vendent.md` | Pages that sell, taken apart: Gadzhi's offer page block by block, African sales and sign-up pages, 8 headline types, principles, page plans, checklist |
+| `references/quiz-funnels.md` | The quiz as a sales page (BetterMe, The Coach taken apart, 17/11/2026): when a quiz beats a page, the 13-block skeleton, deterministic results, African adaptation, tools, checklist |
 | `references/ad-text.md` | The shared ad text: structure, title, description, what lint checks |
 | `references/followup.md` | Confirmation call script and WhatsApp messages |
 | `scripts/offer.py` | competitor, compare, init, plan, simulate, lint, check, report |

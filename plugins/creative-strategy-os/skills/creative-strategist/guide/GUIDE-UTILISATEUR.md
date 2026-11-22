@@ -1,6 +1,6 @@
 # Creative Strategy OS — le guide d'utilisation
 
-*Version 1.5.0 · pour Windows et Mac*
+*Version 1.7.0 · pour Windows et Mac*
 
 ## Ce que fait Creative Strategy OS
 
@@ -151,7 +151,8 @@ Dans le parcours complet, tout ce que Claude produit pendant les étapes 1 à 5 
 - **Il grandit.** Après chaque étape, Claude le relie avec la nouvelle partie et te le dit. Tant que les briefs n'y sont pas, la couverture porte « version de travail · 3 parties sur 5 », et la page « Commence ici » te dit quelle partie vient ensuite.
 - **C'est toujours le même fichier.** La nouvelle version remplace l'ancienne. Si tu veux garder une version, copie-la ailleurs.
 - **Ferme-le avant que Claude le relie.** Un document ouvert dans Word ou dans ton lecteur PDF ne peut pas être remplacé. Si Claude te dit « STRATEGIE-CREATIVE.docx est ouvert », ferme-le et dis « c'est fermé ».
-- **Les cinq parties** : 1. Le point de départ · 2. L'offre et la page · 3. La recherche · 4. La stratégie · 5. Les briefs. Les vérifications faites par la machine sont en annexe, à la fin.
+- **Les cinq parties** : 1. Le point de départ · 2. L'offre et la page · 3. La recherche · 4. La stratégie · 5. Les briefs. Une fois les briefs écrits, il s'y ajoute **6. Le mini-cours** (lire tes chiffres, corriger une pub, faire les suivantes seul) et une **annexe** écrite en phrases : ce qui a été vérifié, ce qui reste à trancher, comment lire les codes, les sources et le glossaire.
+- **Écrit pour un débutant.** Chaque partie s'ouvre sur « À quoi sert cette partie ». Le document ne parle jamais à l'outil (pas de codes de règle ni de noms de commande). Chaque brief commence par son rôle dans le test et ce qu'il faut produire. Avant de refaire un document entier, Claude te montre le sommaire et attend ton accord.
 - **Où en est ton document ?** Ouvre `COMMENCE-ICI.md` à la racine du dossier de ton produit. La partie « Ton document » montre les cinq parties (✅ faite, ⬜ à venir) et la date de la dernière version.
 
 **Les documents d'étape.** Ensuite, et dans le parcours par étape, chaque étape a son document, dans le même dossier `deliverables\word` :
@@ -283,6 +284,16 @@ Les dix étapes restent les mêmes. Ce qui change : ce qu'on compte, ce qui fait
 **Les pubs d'un live tournent 7 à 10 jours avant le live, jusqu'au jour du live, puis s'arrêtent.** La fiche de
 lancement calcule les jours à partir de la date du live, et la lecture se fait au jour 3 et au jour 5, quand il reste
 assez de temps pour couper les perdantes. Le live suivant repart avec les gagnantes.
+
+**Tes pubs mènent à un quiz ?** Dis-le à Claude : « mes pubs envoient vers un quiz ». Tes pubs vendront alors le
+test gratuit, jamais ton produit. Elles ne montrent ni prix, ni offre, ni garantie : l'offre arrive à la fin du quiz.
+Chaque pub finit sur « gratuit », le temps du test (« 3 minutes ») et « fais le test ». Claude te demande ce que ton
+quiz contient : à qui il parle, ses questions, les profils qu'il donne, ce que la personne reçoit avant l'offre. Il
+vérifie ensuite que chaque promesse de tes pubs est une chose que ton quiz donne vraiment, et que chaque pub amène
+quelqu'un à qui ton quiz parle.
+
+**Ton produit n'est pas encore en ligne ?** Donne à Claude tes notes ou ta page de travail : il part de là, et
+contrôle la page le jour où elle existe.
 
 Dans la recherche, une pub de webinaire ne tourne que 10 à 14 jours. Ce qui prouve que le tunnel d'un annonceur paie, c'est le nombre de pubs qu'il lance, plus que la durée de chacune. **Après chaque live**, donne à Claude les inscrits, les présents, les ventes et la dépense. Il te donne le coût par présent et par vente, et remplace les taux supposés par les vrais.
 
