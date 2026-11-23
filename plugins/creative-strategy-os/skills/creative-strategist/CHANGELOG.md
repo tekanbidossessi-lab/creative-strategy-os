@@ -1,5 +1,9 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.7.1 — 2026-11-23
+
+- 1.7.1 : chaque document de la suite a la présentation du livre de stratégie : couverture, sommaire cliquable, chaque grand titre sur sa propre page (son numéro, son titre, le trait vert), en haut le produit et le type de document, en bas « Créé avec Creative Strategy OS · par Richie Tekan · WhatsApp » et le numéro de page
+
 ## 1.7.0 — 2026-11-22
 
 - 1.7.0 « Le livre pour un débutant » : le livre de stratégie garde sa structure et parle au lecteur, jamais à l'outil (encadré « À quoi sert cette partie », marques, codes de règle, commandes et noms de fichiers retirés) ; partie « Le mini-cours » (trois secondes, référence et avatar, natives, pourquoi la pub vend le test, lire tes chiffres avec ceux du quiz, du chiffre à la correction, boucle, variations, teste petit) ; Annexe en phrases (vérifications, points à trancher, codes, sources, glossaire) ; docs.py --book --outline pour valider le sommaire ; « Après l'achat » pour le digital, lignes d'un autre type filtrées ; briefs : rôle dans le test et ce qu'il faut produire en tête, alerte quand un mot fort de la référence disparaît ; checklist du stratège en 38 points ; téléchargement par le lien vidéo des captures, transcription relancée vidéo par vidéo en base quand la mémoire manque, images refusées par Word réenregistrées

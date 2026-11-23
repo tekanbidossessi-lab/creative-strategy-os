@@ -22,7 +22,7 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_SERVER = "https://csos-licence.onrender.com"   # replaced at build time by build_plugin.py
-PLUGIN_VERSION = "1.7.0"                                  # replaced at build time by build_plugin.py
+PLUGIN_VERSION = "1.7.1"                                  # replaced at build time by build_plugin.py
 MARKETPLACE = "creative-strategy-os"
 MARKETPLACE_URL = "https://github.com/tekanbidossessi-lab/creative-strategy-os.git"
 CONF_DIR = Path(os.environ.get("CSOS_HOME") or (Path.home() / ".csos"))

@@ -955,6 +955,10 @@ def build(md_path, out, brand, title_hint="", lang="fr", cover=None, ws=None):
             title, sub = title or h1, h1 if sub is None and title else sub
             blocks = blocks[:first] + blocks[first + 1:]
         levels = sorted({x[0] for k, x in blocks if k == "h"})[:2]
+        if ws is not None and levels:
+            # Richie, 23/11/2026: every document carries the strategy book's branding: cover, contents, and each big
+            # title opening on its own page (« 01 », the title, the green line), header and signature on every page
+            return build_parts(w, blocks, levels, (kind, title, sub, meta), out)
         entries, out_blocks, k_ = [], [], 0
         for k, x in blocks:
             if k == "h" and x[0] in levels:
@@ -970,6 +974,40 @@ def build(md_path, out, brand, title_hint="", lang="fr", cover=None, ws=None):
         w.page_break()
         blocks = out_blocks
     w.render(blocks)
+    return w.save(out)
+
+
+def build_parts(w, blocks, levels, cover, out):
+    """A step document laid out like the strategy book: the cover, the contents, what comes before the first big title
+    on its own page, then one part page per big title (its number, its title) followed by its content."""
+    kind, title, sub, meta = cover
+    top, second = levels[0], (levels[1] if len(levels) > 1 else None)
+    intro, parts, entries = [], [], []
+    for k, x in blocks:
+        if k == "h" and x[0] == top:
+            n = len(parts) + 1
+            parts.append((n, x[1], f"p{n}", []))
+            entries.append((1, f"{n}. {x[1]}", f"p{n}"))
+            continue
+        if k == "h" and x[0] == second and parts:
+            anchor = f"p{parts[-1][0]}_{len(entries)}"
+            entries.append((2, x[1], anchor))
+            parts[-1][3].append(("h", (2, x[1], anchor, False)))
+            continue
+        if k == "h" and parts:
+            x = (min(max(x[0], 3), 4), x[1])
+        (parts[-1][3] if parts else intro).append((k, x))
+    w.cover(title, sub, meta, kind=kind)
+    if entries:
+        w.toc(entries)
+    if intro:
+        w.page_break()
+        w.render(intro)
+    for n, ptitle, anchor, pblocks in parts:
+        w.part_page(n, ptitle, "", anchor)
+        while pblocks and pblocks[-1][0] == "break":
+            pblocks.pop()
+        w.render([b for i, b in enumerate(pblocks) if not (i == 0 and b[0] == "break")])
     return w.save(out)
 
 
@@ -1226,7 +1264,7 @@ def main(argv=None):
         for m in mds:
             out = out_dir / f"{m.stem}.docx"
             try:
-                build(m, out, brand, f"{ws.get('name')} · {m.stem.replace('-', ' ').title()}", lang,
+                build(m, out, brand, f"{ws.get('name')} · {DOC_KIND[lang].get(m.stem.upper(), m.stem.replace('-', ' ').title())}", lang,
                       cover=None if a.plain else cover_of(P, ws, m.stem, lang), ws=ws)
             except PermissionError:
                 raise WsError(f"{out.name} est ouvert dans Word : ferme-le et relance")
