@@ -146,7 +146,7 @@ Par défaut, tu reçois le document complet. Si tu veux seulement une étape, di
 |---|---|---|
 | Pour qui | Tout nouveau produit, même si tu fais déjà des pubs depuis des mois | Quand tu veux une seule chose maintenant : lire tes résultats, décliner une pub gagnante |
 | Ce que tu reçois | **Un seul document** : ta stratégie créative complète, de l'entrée jusqu'aux briefs | Un document par étape faite |
-| Comment il arrive | Il grandit à chaque étape : après l'entrée, il a une partie ; après les briefs, il en a cinq | À la fin de chaque étape |
+| Comment il arrive | En une fois, complet, quand les briefs sont faits. Claude enchaîne les cinq étapes et te dit en une ligne où il en est | À la fin de chaque étape |
 | Après | Le lancement, la lecture et les variations ont chacun leur document | Pareil |
 
 **Pourquoi le parcours complet, même si tu as déjà des pubs ?** Parce que chaque partie nourrit la suivante. Les mots de tes clients, lus dans la recherche, deviennent ceux des scripts. Ton offre, corrigée dans la partie 2, est celle que les pubs annoncent. Ton export et tes pubs gagnantes rendent la stratégie plus juste, ils ne la remplacent pas. Sauter des étapes, c'est écrire des briefs sur des suppositions.
@@ -159,7 +159,8 @@ Dans le parcours complet, tout ce que Claude produit pendant les étapes 1 à 5 
 
 `<le dossier de ton produit>\deliverables\word\STRATEGIE-CREATIVE.pdf` (et le `.docx`, si tu veux le modifier dans Word).
 
-- **Il grandit.** Après chaque étape, Claude le relie avec la nouvelle partie et te le dit. Tant que les briefs n'y sont pas, la couverture porte « version de travail · 3 parties sur 5 », et la page « Commence ici » te dit quelle partie vient ensuite.
+- **Il arrive en une fois, complet.** Claude enchaîne l'entrée, l'offre, la recherche, la stratégie et les briefs, puis relie le document entier. Si le travail s'arrête avant la fin (fin de session, licence), il te relie une « version de travail » avec les parties déjà faites, pour que rien ne se perde ; la version complète la remplace ensuite.
+- **Ensuite, un document par étape, l'un après l'autre** : la production, le contrôle des vidéos, le lancement, la lecture des résultats, les variations.
 - **C'est toujours le même fichier.** La nouvelle version remplace l'ancienne. Si tu veux garder une version, copie-la ailleurs.
 - **Ferme-le avant que Claude le relie.** Un document ouvert dans Word ou dans ton lecteur PDF ne peut pas être remplacé. Si Claude te dit « STRATEGIE-CREATIVE.docx est ouvert », ferme-le et dis « c'est fermé ».
 - **Les cinq parties** : 1. Le point de départ · 2. L'offre et la page · 3. La recherche · 4. La stratégie · 5. Les briefs. Une fois les briefs écrits, il s'y ajoute **6. Le mini-cours** (lire tes chiffres, corriger une pub, faire les suivantes seul) et une **annexe** écrite en phrases : ce qui a été vérifié, ce qui reste à trancher, comment lire les codes, les sources et le glossaire.

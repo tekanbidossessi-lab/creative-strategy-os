@@ -31,7 +31,9 @@ the market, the language, the competitors already read. Then `python CS/ws.py st
 ## 1. Plan (references/search.md)
 
 `python S/research.py plan <dossier> --terms "…" [--refs N]`: the product and the problem, French and English, plus
-the avatar's words. Mark English terms with `@en` when they aren't obvious (« posture corrector@en »). Countries
+the avatar's words. **TikTok is there to hear what people say about the product, the problem and the solution**
+(Richie, 24/11/2026): give it the problem in the people's own words (« yeux qui piquent », « vue floue écran »), the
+solution (the ingredient, the method) and the product, four terms at least; a product name alone often has few videos. Mark English terms with `@en` when they aren't obvious (« posture corrector@en »). Countries
 default to the market, its neighbours, France and the US. **How many references:** 40 in free mode, 60 with Apify or
 Gemini. Ask the user once, at the start, if they want another number (more for a crowded market, fewer to go
 fast); `--refs N` sets it and the quotas follow (Ad Library 40 %, TikTok 40 %, Instagram 20 %). Never block on it.
@@ -132,7 +134,11 @@ Group those openings by angle before the strategy.
 ## 5. Close
 
 Run `research.py status` for the checks and `research.py log` for REFERENCES_LOG.xlsx. Then
-`research.py report <dossier> --done` writes deliverables/RECHERCHE.md.
+`research.py report <dossier> --done` writes deliverables/RECHERCHE.md, with « Ce que les gens disent » (the comments
+on the product, the problem and the solution, as written). **TikTok is compulsory (1.7.3):** `--done` refuses while
+`refs_mix` (15 TikTok, or a third of the plan) or `refs_intent` (the comments of half the TikTok kept, 40 at least)
+is red. Only when the subject truly isn't on TikTok, record it by hand with the searches tried:
+`research.py check <dossier> refs_mix na --evidence "…"` (and `refs_intent`). Never mark it to go faster.
 
 Hand over to cs-strategy: the avatars and the system of ten creatives, built on these references, the
 customers' words and the competitors' pages.

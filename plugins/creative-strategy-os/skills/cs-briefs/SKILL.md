@@ -132,9 +132,10 @@ It binds the intake, the offer, the research, the strategy and the briefs: a cov
 the machine checks in an appendix. Send the .docx (editable) and the .pdf. Rebuild it after any change.
 
 **The book is written for a beginner, never for the tool** (1.7, 22/11/2026: a client found a v2 book readable only
-as the suite's checkpoints; a Plan d'Attaque layout was refused for its form: the book's structure stays). Before
-rebuilding a book, show the contents first and wait for the client's yes: `docs.py <dossier> --book --outline` prints
-the parts and their sections. In the book:
+as the suite's checkpoints; a Plan d'Attaque layout was refused for its form: the book's structure stays). The first
+binding never waits: the full strategy is made in one go. Before REbuilding a book the client already has (a
+change he asked for), show the contents first and wait for his yes: `docs.py <dossier> --book --outline` prints the
+parts and their sections. In the book:
 - the order stays: Commence ici · Le point de départ · L'offre et la page · La recherche · La stratégie · Les briefs ·
   **Le mini-cours** · Annexe (the checks written in sentences, the glossary, how to read the codes, the sources, the
   points to decide);

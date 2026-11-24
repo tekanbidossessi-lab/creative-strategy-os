@@ -103,9 +103,13 @@ complete document (the full path) in the free formula, and that both can change 
 The path (`references/workspace.md`, « Les deux parcours »):
 - **Parcours complet, recommended for everyone, and always for a first product in the suite.** The first cycle
   ends with ONE document, the creative strategy (`deliverables/word/STRATEGIE-CREATIVE.pdf`): the starting point,
-  the offer, the research, the strategy and the briefs. It is rebound after each of those five steps, so the user
-  always opens the same file and watches it grow (« version de travail · 3 parties sur 5 » on the cover until the
-  briefs are in). Even a seller with months of ads gets it: their export and winners make it stronger.
+  the offer, the research, the strategy and the briefs. **It is made once, complete, when the briefs are done**
+  (Richie, 24/11/2026): run the five steps one after the other without stopping to hand over partial documents or
+  the steps' .md files, then bind the book and give it. Between steps, one line on what was done and what comes.
+  A « version de travail » (« 3 parties sur 5 » on the cover) is bound only when the work stops before the end (end
+  of the session, a licence block, the user asks to see it), as a save. After the strategy, each step has its own
+  document, one after the other: production, control, launch, reading, variations. Even a seller with months of
+  ads gets the full strategy: their export and winners make it stronger.
 - **Parcours par étape**, only when the user asks for one step now (« lis juste mes résultats », « fais-moi
   les variations »): the step runs and gives its own document (LECTURE, VARIATIONS…). Say once that the complete
   document stays available: `ws.py set <dossier> path=full`, then `ws.py start <dossier> intake`.
@@ -215,9 +219,10 @@ python S/ws.py step <dossier> <étape> done --output <fichiers> --note "ce qui a
 ```
 **The document, every time.** `step … done` prints the document to make: run it at once, never leave a step
 as a bare .md.
-- Parcours complet, cycle 1, steps intake to briefs: `python S/docs.py <dossier> --book`. Give the user the
-  path of the PDF and of the .docx, and say what the new part brings and what part comes next. After the briefs,
-  `ws.py next` refuses to move to production until the book is bound with them.
+- Parcours complet, cycle 1, steps intake to briefs: no document between steps; `python S/docs.py <dossier> --book`
+  once, when the briefs are done (or as a « version de travail » if the work stops before). Give the user the path
+  of the PDF and of the .docx and say in a few lines what the strategy decides. Never send the steps' .md files as
+  deliverables. After the briefs, `ws.py next` refuses to move to production until the book is bound with them.
 - Parcours par étape, and every step from production on (cycle 2 and later too): `python S/docs.py <dossier> <NOM>`
   (FICHE-ENTREE, OFFRE, RECHERCHE, STRATEGIE, BRIEFS, PRODUCTION, CONTROLE, LANCEMENT, LECTURE, VARIATIONS, MONTAGE).
 - The user can ask for the complete document at any time, whatever the path: `docs.py <dossier> --book`

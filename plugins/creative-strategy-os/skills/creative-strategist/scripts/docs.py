@@ -68,9 +68,9 @@ TEXT = {
                     "de publicités lui envoyer.",
                     "L'itération : on garde ce qui a gagné et on change une chose à la fois."],
            "draft": {"tag": "version de travail · {n} partie(s) sur 5",
-                     "how": "Ce document est ta stratégie créative. Il grandit à chaque étape : cette version contient "
-                            "{n} partie(s) sur 5. C'est toujours le même fichier, complété à chaque étape jusqu'aux "
-                            "briefs : la nouvelle version remplace l'ancienne.",
+                     "how": "Ce document est ta stratégie créative, en version de travail : le travail s'est arrêté après "
+                            "{n} partie(s) sur 5, et cette version garde ce qui est fait. La version complète arrive en "
+                            "une fois, quand les briefs sont faits, et remplace celle-ci.",
                      "now": ["Lis les parties déjà faites. Si quelque chose ne colle pas à ton produit ou à tes clients, "
                              "dis-le à Claude : rien n'est figé.",
                              "Dis à Claude « on continue » : la prochaine partie est « {next} ».",

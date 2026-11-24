@@ -416,8 +416,10 @@ def write_start_page(P, ws, product, state):
     lines += ["## Ton document", ""]
     bs = book_status(P)
     if book_mode(ws, state):
-        lines.append("**Parcours complet** : un seul document, ta stratégie créative, qui grandit à chaque étape "
-                     "jusqu'aux briefs (deliverables/word/STRATEGIE-CREATIVE.pdf).")
+        lines.append("**Parcours complet** : un seul document, ta stratégie créative complète (le point de départ, "
+                     "l'offre, la recherche, la stratégie, les briefs), relié en une fois quand les briefs sont faits "
+                     "(deliverables/word/STRATEGIE-CREATIVE.pdf). Ensuite, chaque étape a son document, l'un après "
+                     "l'autre : production, contrôle, lancement, lecture, variations.")
         lines.append("")
         lines.append(" · ".join(f"{'✅' if s in bs['have'] else '⬜'} {BOOK_LABELS[s]}" for s in BOOK_STEPS))
         lines.append("")
@@ -823,7 +825,7 @@ def handoff(P, sid, ws=None, state=None):
         n = len(bs["have"])
         parts = f", {n} partie{'s' if n > 1 else ''} sur 5" if n < 5 else ", complet"
         after = (HANDOFF["briefs"]["*"].split(". ", 1)[1] if n >= 5 else
-                 "Il grandit à chaque étape. On passe à la suivante ?")
+                 "Ta stratégie complète arrive en une fois, après les briefs. On passe à l'étape suivante ?")
     return "La suite — " + text.format(one=HANDOFF_ONE.get(kind, "commande"), book=book, parts=parts, after=after)
 
 
@@ -862,7 +864,14 @@ def cmd_step(a):
             + (f" Sorties : {', '.join(a.output)}." if a.output else ""))
     if a.status == "done" and a.step in STEP_DOC:
         if a.step in BOOK_STEPS and book_mode(ws, state):
-            print("Document complet (il grandit à chaque étape, à relier maintenant) : " + docs_cmd(P, "--book"))
+            # 1.7.3 (Richie, 24/11/2026): one strategy document, made once when the briefs are done; no partial
+            # versions handed over at each step. A « version de travail » only when the work stops before the end.
+            if a.step == BOOK_STEPS[-1]:
+                print("Document complet, à relier maintenant (une seule fois, toutes les parties) : " + docs_cmd(P, "--book"))
+            else:
+                print("Pas de document à cette étape : la stratégie complète se relie en une fois, après les briefs. "
+                      "Enchaîne l'étape suivante. Si le travail s'arrête avant (fin de session, licence), relie une "
+                      "version de travail pour l'utilisateur : " + docs_cmd(P, "--book"))
         elif (P["root"] / "deliverables" / f"{STEP_DOC[a.step]}.md").exists():
             print("Document de l'étape : " + docs_cmd(P, STEP_DOC[a.step]))
     print(refresh(P, ws, state))
