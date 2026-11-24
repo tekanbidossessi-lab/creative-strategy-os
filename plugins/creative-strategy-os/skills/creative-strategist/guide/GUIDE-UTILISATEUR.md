@@ -1,6 +1,6 @@
 # Creative Strategy OS — le guide d'utilisation
 
-*Version 1.7.0 · pour Windows et Mac*
+*Version 1.7.2 · pour Windows et Mac*
 
 ## Ce que fait Creative Strategy OS
 
@@ -57,9 +57,10 @@ Ensuite, chaque fois que tu reviens, tu écris « On continue ». Claude reprend
 
 1. **L'app Claude.** Télécharge-la sur claude.ai/download, installe-la, connecte-toi et ouvre l'onglet **Code** une fois.
 2. **Le plugin.** Dans l'app : Paramètres, Plugins, « Ajouter une marketplace », colle `https://github.com/tekanbidossessi-lab/creative-strategy-os.git` (le lien entier, avec `https://` et `.git` : la forme courte échoue sur beaucoup de PC Windows), puis installe **creative-strategy-os**. Ferme et rouvre l'app.
-3. **Ta clé.** Crée un dossier pour ton travail, ouvre-le dans l'onglet Code et écris : « je veux des pubs qui vendent pour mon produit ». Claude te demande ta clé de licence (dans l'e-mail de Chariow) : colle-la. Elle vaut pour 2 ordinateurs, à vie.
-4. **Les outils.** Écris : « installe les outils de Creative Strategy OS ». Claude lance le script d'installation du plugin (Python, Chrome, LibreOffice si tu n'as pas Word, les outils de la suite), comme l'étape 4 ci-dessous, puis vérifie tout avec toi.
-5. **Claude dans Chrome** et **la clé Gemini gratuite** : étapes 5 et 6 ci-dessous.
+3. **Une session sur ton ordinateur, pas dans le cloud.** Dans l'onglet Code, quand tu ouvres une nouvelle session, l'app te laisse choisir où elle tourne. Choisis **ton ordinateur (« Local »)** et ton dossier de travail. Une session dans le cloud tourne sur une machine temporaire, loin de chez toi : tes fichiers n'arrivent pas sur ton disque, Claude ne peut pas ouvrir ton Chrome, et tout peut disparaître quand la session s'arrête. Si une commande de la suite affiche « ATTENTION : tu travailles sur une machine temporaire dans le cloud », ferme cette session et ouvre-en une nouvelle sur ton ordinateur. Ce que la session cloud a déjà fait, demande-le à Claude en zip avant de la fermer, et décompresse-le dans ton dossier de travail.
+4. **Ta clé.** Crée un dossier pour ton travail, ouvre-le dans l'onglet Code et écris : « je veux des pubs qui vendent pour mon produit ». Claude te demande ta clé de licence (dans l'e-mail de Chariow) : colle-la. Elle vaut pour 2 ordinateurs, à vie.
+5. **Les outils.** Écris : « installe les outils de Creative Strategy OS ». Claude lance le script d'installation du plugin (Python, Chrome, LibreOffice si tu n'as pas Word, les outils de la suite), comme l'étape 4 ci-dessous, puis vérifie tout avec toi.
+6. **Claude dans Chrome** et **la clé Gemini gratuite** : étapes 5 et 6 ci-dessous.
 
 Les mises à jour arrivent toutes seules : à ta première commande, le plugin active les mises à jour automatiques de Claude et te le dit en une ligne. Chaque commande commence par le nom de ta version (« Creative Strategy OS 1.4.7 »). Rien à réinstaller.
 
@@ -95,7 +96,17 @@ Si tu lis « Python n'est pas encore visible », c'est normal la première fois.
 
 **5. Claude dans Chrome.** Dans Chrome, va sur claude.ai/chrome, clique sur « Ajouter à Chrome » et connecte-toi avec ton compte Claude. Dans ce même Chrome, connecte-toi à Facebook, Instagram et TikTok.
 
-**6. Facultatif : la clé Gemini.** Va sur aistudio.google.com/apikey et clique sur « Create API key » (un compte Google suffit, pas de carte). Dans PowerShell, tape `setx GEMINI_API_KEY "ta clé"` en remplaçant ta clé. Ferme ensuite complètement l'app Claude, puis rouvre-la.
+**6. Facultatif : la clé Gemini, pas à pas.** Un compte Google suffit, pas de carte bancaire.
+
+1. Ouvre aistudio.google.com/apikey dans Chrome et connecte-toi avec ton compte Google.
+2. La première fois, accepte les conditions de Google (coche les cases demandées, puis Continuer).
+3. Clique sur **Créer une clé API** (« Create API key »). Si Google demande un projet, prends celui proposé par défaut, ou « nouveau projet ».
+4. Ta clé s'affiche (elle commence souvent par `AIza`) : clique sur **Copier**. Ne la colle jamais dans une conversation ni dans un message.
+5. Touche Windows, tape **PowerShell**, ouvre-le, puis tape `setx GEMINI_API_KEY "TA_CLE"` en remplaçant TA_CLE par ta clé (garde les guillemets). Entrée : PowerShell répond « OPÉRATION RÉUSSIE ».
+6. Ferme PowerShell, puis **quitte complètement l'app Claude** (clic droit sur son icône près de l'horloge, Quitter) et rouvre-la.
+7. Vérifie : « Vérifie que tout est prêt pour Creative Strategy OS ». La ligne Gemini doit dire que la clé est trouvée.
+
+Si la clé n'est pas trouvée, c'est presque toujours l'app Claude qui n'a pas été quittée complètement. Si AI Studio n'est pas disponible dans ton pays, passe-toi de Gemini : la suite marche sans.
 
 **Gemini payant (facultatif).** Si un jour tu actives la facturation dans AI Studio, mets un plafond de dépenses de 5 à 10 $ par mois (Dépenses, « Plafond de dépenses mensuel ») : une recherche de 40 à 60 références coûte bien moins d'1 $. Plafond atteint, Google met l'API en pause jusqu'au 1er du mois et la suite te le dit. En gratuit, ce plafond ne sert à rien : tu ne paies rien.
 
@@ -115,7 +126,7 @@ Pour vérifier, colle `open ~/.claude/skills` dans le Terminal : tu dois voir le
 
 **5. Claude dans Chrome**, comme sur Windows.
 
-**6. Facultatif : la clé Gemini.** Ajoute la ligne `export GEMINI_API_KEY="ta clé"` à la fin du fichier `~/.zshrc`, puis ferme et rouvre l'app Claude.
+**6. Facultatif : la clé Gemini, pas à pas.** Crée la clé comme sur Windows (étapes 1 à 4 : aistudio.google.com/apikey, Créer une clé API, Copier). Puis ouvre l'app **Terminal**, tape `echo 'export GEMINI_API_KEY="TA_CLE"' >> ~/.zshrc` en remplaçant TA_CLE par ta clé, ferme le Terminal, **quitte l'app Claude** (Cmd + Q) et rouvre-la. Vérifie avec « Vérifie que tout est prêt pour Creative Strategy OS ».
 
 ### Vérifier que tout est prêt
 
@@ -425,13 +436,15 @@ Les chiffres d'urgence restent en blanc dans le brief : remplis-les seulement s'
 
 Quand une créative est prête, nomme le fichier par son code (« C01 V1 A.mp4 ») et **envoie-la à Claude**. Il la contrôle avant la mise en ligne.
 
-## Gratuit, hybride, payant
+## Les outils de recherche : gratuits, hybrides, payants
 
-- **Gratuit** : rien à payer en plus de Claude. La recherche se fait dans ton Chrome. Avec la clé Gemini gratuite, toutes les références sont analysées ; sans elle, Claude analyse les 15 qui comptent.
+Ce choix ne touche que les outils qui font la recherche. Ta licence, elle, est complète dans les trois cas : toutes les étapes, tous les documents. Sur tes constats et tes documents, « outils gratuits » veut dire « sans clé Apify ni Gemini », pas « version gratuite ».
+
+- **Gratuits** : rien à payer en plus de Claude. La recherche se fait dans ton Chrome. Avec la clé Gemini gratuite, toutes les références sont analysées ; sans elle, Claude analyse les 15 qui comptent.
 - **Hybride** : Apify cherche à ta place tant que son crédit gratuit mensuel suffit.
 - **Payant** : Apify et Gemini en payant, pour aller plus vite et plus large.
 
-Dis à Claude « passe en formule hybride » pour changer.
+Dis à Claude « passe en mode hybride » pour changer.
 
 ## Partager tes constats avec Richie (facultatif)
 
@@ -470,6 +483,8 @@ Sur Mac, la même ligne avec `python3`, `~/.claude/skills/...` et `~/Downloads/.
 
 | Ce que tu vois | Ce que tu fais |
 |---|---|
+| « ATTENTION : tu travailles sur une machine temporaire dans le cloud » | Ta session tourne dans le cloud, pas sur ton PC (Installer, étape 3). Demande à Claude un zip de ton dossier, ouvre une nouvelle session sur ton ordinateur (« Local »), décompresse le zip dans ton dossier de travail, puis dis « on continue » |
+| « LICENCE : … » | Claude s'arrête, c'est normal : ton travail est sauvegardé. Écris à Richie sur WhatsApp avec le message exact ; dès que c'est réglé, dis « on continue » et la suite reprend où elle s'était arrêtée |
 | Claude ne semble pas connaître la suite | Vérifie que les dix dossiers sont directement dans `.claude\skills` (Installer, étape 3), ferme complètement l'app Claude, rouvre-la, puis utilise l'onglet **Code** |
 | « python n'est pas reconnu » dans PowerShell | Ferme PowerShell, ouvre-en un nouveau, relance le script d'installation |
 | « Il faut cliquer sur COPIER » | Claude a mis une capture derrière un bouton vert dans Chrome. Clique dessus, puis dis « c'est copié » |

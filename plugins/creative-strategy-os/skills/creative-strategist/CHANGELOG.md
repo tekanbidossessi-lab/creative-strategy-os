@@ -1,5 +1,9 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.7.2 — 2026-11-24
+
+- 1.7.2 « Le premier acheteur » : la licence reconnaît enfin un ordinateur déjà activé (le serveur cherchait son identifiant au mauvais endroit chez Chariow, chaque reprise réactivait le même ordinateur et bloquait l'acheteur à « 2 ordinateurs » après vingt minutes) ; un refus de licence arrive dans les constats ; session dans le cloud signalée dès la première commande, avec le guide pour ouvrir une session sur son ordinateur ; installation Linux (setup_linux.sh) ; la transcription lit le son avec ffmpeg quand le lecteur vidéo de Python échoue ; « mode free » devient « outils gratuits (sans clé Apify ni Gemini) » et Claude ne parle plus de « formule gratuite » ; les contrôles TikTok (pixel, texte de pub) ne s'appliquent qu'à un produit qui pub sur TikTok ; la recherche exige des TikTok (au moins 15, ou le tiers du plan) ; quand la licence bloque, Claude s'arrête et ne fait jamais l'étape à la main ; research.py reject accepte le code AL11 ; pagefacts --save ne plante plus ; guide : étapes Gemini pas à pas et session locale
+
 ## 1.7.1 — 2026-11-23
 
 - 1.7.1 : chaque document de la suite a la présentation du livre de stratégie : couverture, sommaire cliquable, chaque grand titre sur sa propre page (son numéro, son titre, le trait vert), en haut le produit et le type de document, en bas « Créé avec Creative Strategy OS · par Richie Tekan · WhatsApp » et le numéro de page

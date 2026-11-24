@@ -757,11 +757,39 @@ def has_audio(path):
     except Exception:
         return True
 
+def ffmpeg_audio(src):
+    """The sound of a video as 16 kHz mono samples, decoded by ffmpeg (the system's, or imageio-ffmpeg's) instead of
+    PyAV. None when neither ffmpeg nor numpy is there."""
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    exe = shutil.which('ffmpeg')
+    if not exe:
+        try:
+            import imageio_ffmpeg
+            exe = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return None
+    try:
+        out = subprocess.run([exe, '-nostdin', '-v', 'error', '-i', str(src), '-f', 'f32le', '-ac', '1', '-ar', '16000', '-'], capture_output=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0 or not out.stdout:
+        return None
+    return np.frombuffer(out.stdout, dtype=np.float32).copy()
+
 def guess_language(model, src, allowed):
     """The most likely language of the first 30 seconds, among the allowed ones only (French first when unsure)."""
     try:
-        from faster_whisper import decode_audio
-        audio = decode_audio(str(src), sampling_rate=16000)[:16000 * 30]
+        try:
+            from faster_whisper import decode_audio
+            audio = decode_audio(str(src), sampling_rate=16000)[:16000 * 30]
+        except Exception:
+            audio = ffmpeg_audio(src)
+            if audio is None:
+                raise
+            audio = audio[:16000 * 30]
         (_, _, probs) = model.detect_language(audio)
         best = max(((l, p) for (l, p) in probs if l in allowed), key=lambda x: x[1], default=None)
         return best[0] if best else 'fr'
@@ -882,7 +910,20 @@ def cmd_transcribe(a):
                     model = None
                     break
             except Exception as e:
-                print(f"  {r['code']} : échec ({type(e).__name__}) ; relance plus tard, les autres continuent")
+                samples = ffmpeg_audio(src) if attempt == 1 else None
+                if samples is None:
+                    print(f"  {r['code']} : échec ({type(e).__name__}) ; relance plus tard, les autres continuent")
+                    break
+                print(f"  {r['code']} : le lecteur vidéo de Python a échoué ({type(e).__name__}) : je lis le son avec ffmpeg et je réessaie", flush=True)
+                src_for_whisper = samples
+                try:
+                    (segs, info) = model.transcribe(src_for_whisper, beam_size=1 if a.fast else 5, vad_filter=True, language=lang, condition_on_previous_text=False)
+                    lines = [f'# {src.stem} | lang={info.language} | model={model_name} | dur={info.duration:.0f}s']
+                    for s_ in segs:
+                        (mm, ss) = divmod(int(s_.start), 60)
+                        lines.append(f'[{mm}:{ss:02d}] {s_.text.strip()}')
+                except Exception as e2:
+                    print(f"  {r['code']} : échec ({type(e2).__name__}) ; relance plus tard, les autres continuent")
                 break
         if model is None:
             rest = [x['code'] for x in todo[todo.index(r):]]

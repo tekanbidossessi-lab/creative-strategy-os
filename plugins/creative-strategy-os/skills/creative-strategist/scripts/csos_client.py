@@ -22,7 +22,7 @@ import urllib.request
 from pathlib import Path
 
 DEFAULT_SERVER = "https://csos-licence.onrender.com"   # replaced at build time by build_plugin.py
-PLUGIN_VERSION = "1.7.1"                                  # replaced at build time by build_plugin.py
+PLUGIN_VERSION = "1.7.2"                                  # replaced at build time by build_plugin.py
 MARKETPLACE = "creative-strategy-os"
 MARKETPLACE_URL = "https://github.com/tekanbidossessi-lab/creative-strategy-os.git"
 CONF_DIR = Path(os.environ.get("CSOS_HOME") or (Path.home() / ".csos"))
@@ -67,6 +67,42 @@ def licence_key():
 def device_id():
     raw = f"{platform.node()}|{os.environ.get('USERNAME') or os.environ.get('USER') or ''}|{platform.system()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def in_cloud():
+    """True when Claude Code runs on a temporary cloud machine (a « cloud » session of the Claude app or claude.ai)
+    instead of the buyer's computer. 24/11/2026: a buyer worked a whole evening in one without knowing; his files
+    lived in /home/user and had to be zipped back to him."""
+    if str(os.environ.get("CLAUDE_CODE_REMOTE") or "").lower() in ("1", "true", "yes"):
+        return True
+    if os.environ.get("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE") or os.environ.get("CLAUDE_CODE_REMOTE_SESSION_ID"):
+        return True
+    return platform.system() == "Linux" and str(Path.home()) == "/home/user" and not os.environ.get("DISPLAY")
+
+
+CLOUD_TEXT = (
+    "ATTENTION : tu travailles sur une machine temporaire dans le cloud, pas sur ton ordinateur. Tes dossiers et tes "
+    "vidéos sont sur cette machine : ils peuvent disparaître si la session s'arrête, et la suite ne peut pas écrire "
+    "sur ton disque. Pour travailler sur ton PC : dans l'application Claude, onglet Code, ouvre une nouvelle session "
+    "et choisis ton ordinateur (« Local »), pas le cloud.\n(Claude : dis-le à l'utilisateur en deux phrases avant de "
+    "continuer, et propose-lui d'ouvrir une session locale. S'il veut rester dans le cloud, envoie-lui une sauvegarde "
+    "zip du dossier du produit à la fin de chaque étape.)")
+
+
+def warn_cloud_once():
+    """The cloud warning, once a day at most (the conf lives in the home folder, so a new machine says it again)."""
+    if not in_cloud():
+        return
+    conf = load_conf()
+    today = __import__("datetime").date.today().isoformat()
+    if conf.get("cloud_warned") == today:
+        return
+    print("\n" + CLOUD_TEXT + "\n", file=sys.stderr, flush=True)
+    try:
+        conf["cloud_warned"] = today
+        save_conf(conf)
+    except OSError:
+        pass
 
 
 # ---------- updates (1.4.7) ----------
@@ -260,6 +296,7 @@ def forward(script_file, argv):
                    "findings": findings_on(), "session": session_id()}
         ensure_auto_update()
         print(version_line(), file=sys.stderr, flush=True)
+        warn_cloud_once()
         before = digest(ws) if ws else {}
         res = call("/v1/run", payload)
         ask_findings_once()
@@ -319,6 +356,7 @@ def guide(skill, name):
 
 def status():
     ensure_auto_update()
+    warn_cloud_once()
     return call("/v1/licence", {"key": licence_key(), "device": device_id(), "plugin_version": PLUGIN_VERSION})
 
 

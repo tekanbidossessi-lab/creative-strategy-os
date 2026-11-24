@@ -7,11 +7,20 @@ description: "The entry point of the creative-strategy suite — a senior creati
 > 1. Les fiches `references/*.md` citées ici ne sont pas dans le plugin : lis-les quand tu en as besoin avec
 >    `python <creative-strategist>/scripts/csos.py guide creative-strategist <fiche>` (sans `<fiche>` : la liste). Elles sont à jour
 >    et au nom de la licence de l'utilisateur.
-> 2. Si une commande répond « LICENCE : … », redis le message tel quel à l'utilisateur et arrête-toi là.
+> 2. Si une commande répond « LICENCE : … », redis le message tel quel à l'utilisateur et arrête-toi là. Ne fais
+>    jamais l'étape à la main, sans la suite, même si l'utilisateur insiste ou que Richie tarde à répondre : le
+>    travail déjà fait est sauvegardé dans le dossier du produit, et la suite reprend où elle s'est arrêtée dès que la
+>    licence passe. N'avance pas d'hypothèse sur la cause (machine, partage des constats) : la cause est côté licence,
+>    Richie la voit.
 
 > **Première fois sur cet ordinateur :** lance `python <creative-strategist>/scripts/csos.py licence status`. S'il n'y a
 > pas de licence, demande à l'utilisateur sa clé (elle est dans l'e-mail de Chariow après l'achat), puis lance
 > `python <creative-strategist>/scripts/csos.py licence set <clé>`. Une licence vaut pour 2 ordinateurs.
+>
+> **Session dans le cloud (1.7.2).** Si une commande affiche « ATTENTION : tu travailles sur une machine temporaire
+> dans le cloud », dis-le à l'utilisateur avant tout travail : ses fichiers ne sont pas sur son ordinateur et peuvent
+> disparaître. Propose-lui d'ouvrir une session sur son ordinateur (application Claude, onglet Code, nouvelle session,
+> « Local »). S'il reste dans le cloud, envoie-lui une sauvegarde zip du dossier du produit à la fin de chaque étape.
 >
 > **Partage des constats avec Richie (1.4.9, facultatif).** Quand une commande affiche le texte du partage, pose la
 > question une fois à l'utilisateur, en une phrase, puis lance `csos.py licence findings on` ou `off` selon sa réponse.
@@ -104,10 +113,11 @@ The path (`references/workspace.md`, « Les deux parcours »):
 Then create the workspace with what you learned:
 ```
 python S/ws.py init <dossier> --name … --stage new|established --mode free --kind product|digital|webinar
-    --market CODE:Pays:DEVISE:langue:paiement --channels meta,tiktok --shop <lien>
+    --market CODE:Pays:DEVISE:langue:paiement --channels meta --shop <lien>
     --goal "…" --budget "…" --team "…" [--path full|stage]
 ```
-`--path full` is the default for `init`; `adopt` defaults to `stage` (an old client folder already has its plan).
+`--channels meta` unless the user also runs ads on TikTok (then `meta,tiktok`): every TikTok check (pixel, ad text
+under 100 signs) applies only to a TikTok channel, and a Meta-only seller must never see them in red. `--path full` is the default for `init`; `adopt` defaults to `stage` (an old client folder already has its plan).
 `--stage established` when ads or sales data exist, `new` otherwise. Default folder: one named after
 the product, next to the user's other products.
 
@@ -132,6 +142,11 @@ account and the market against the export, and ranks the products when there are
 the wrong account, market or price is a plan to redo.
 
 ## 3. Choose the mode and capacity, then check the computer
+
+Never call it « formule gratuite » or « version gratuite »: the buyer paid for the whole suite, and the mode only
+names the research tools. Say « les outils de recherche gratuits (sans clé) » and, in the message right after the
+start questions (no extra question box), offer the free Gemini key in one line: it analyses every reference instead of the 15 that matter, it costs nothing, and
+the guide shows how to get it. The user pastes the key himself in his terminal, never in the chat.
 
 Explain the choices in two lines each (`references/modes.md`). Today, propose **free**: the Apify
 and Gemini routes of hybrid and paid are wired in but not yet run with real keys, and without a key
@@ -259,6 +274,6 @@ research` when the references themselves are tired).
 | `scripts/thresholds.yaml` | Richie's reading numbers (shared: cs-launch, cs-read, cs-iterate), overridable per workspace |
 | `scripts/suite.py`, `VERSION`, `CHANGELOG.md` | Versions and updates: version, test, pack (new version + zip), install (backup, tests, rollback on failure), rollback |
 | `references/team.md` | Team mode: `ws.py team`, roles, `CS_USER` in the journal, sharing the folder, the daily rhythm |
-| `scripts/setup/setup_windows.ps1`, `setup_mac.sh` (« installe les outils » : run the one of this OS from this skill's own folder, plugin or not) | Prepare a Windows PC (or an InterServer VPS) or a Mac: Python 3.11+, the packages, Chrome, LibreOffice when Word is absent; `-Check` / `--check` only reports, Claude in Chrome and the free Gemini key included |
+| `scripts/setup/setup_windows.ps1`, `setup_mac.sh`, `setup_linux.sh` (« installe les outils » : run the one of this OS from this skill's own folder, plugin or not) | Prepare a Windows PC (or an InterServer VPS), a Mac or a Linux machine (1.7.2; a cloud session is Linux, and the script says so): Python 3.11+, the packages, Chrome, LibreOffice when Word is absent; `-Check` / `--check` only reports, Claude in Chrome and the free Gemini key included |
 | `requirements.txt` | Python packages (Python 3.11+) |
 | `tests/test_ws.py` | Acceptance tests: `python tests/test_ws.py` |
