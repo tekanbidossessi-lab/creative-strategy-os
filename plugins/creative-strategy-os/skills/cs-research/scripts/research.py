@@ -1,1482 +1,293 @@
-"""research.py — the research step of the creative-strategy suite: find, choose, download, transcribe and read the
-references that already sold or went viral, so every script of the plan can start from one, word for word.
-
-    python research.py plan       <dossier> --terms "genouillère, douleur genou, knee pain@en" [--countries GN,CI,FR,US] [--refs 40]
-    python research.py paste      <dossier> [--term T] [--save fichier.json]   a browser capture copied with COPIER
-    python research.py discover   <dossier> [--platform adlib|tiktok|instagram] [--limit 40] [--dry-run] [--yes] [--all]
-    python research.py import     <dossier> <capture.json | apify.json | liens.txt> [--term T] [--country CC] [--lang fr]
-    python research.py rank       <dossier> [--platform adlib|tiktok|instagram] [--top 20]
-    python research.py pick       <dossier> <id ...> [--why "…"]   |   pick <dossier> --auto [--adlib 25 --tiktok 30]
-    python research.py reject     <dossier> <id ...> --reason "…"
-    python research.py download   <dossier> [CODE ...]
-    python research.py transcribe <dossier> [CODE ...] [--model small|medium|auto] [--fast]
-    python research.py sheet      <dossier> [--platform tiktok|adlib|instagram|all]
-    python research.py frames     <dossier> <CODE> [--auto 6 | 0 3 8.5 ...]
-    python research.py analyse    <dossier> <CODE ...> | --all [--engine gemini|frames|pack] [--answer vu.md]
-    python research.py intent     <dossier> <comments.json>
-    python research.py hooks      <dossier>                       the openings of the corpus, from the transcripts
-    python research.py check      <dossier> [<id> <statut> --evidence "…"]
-    python research.py status     <dossier>
-    python research.py log        <dossier>                       REFERENCES_LOG.xlsx
-    python research.py report     <dossier> [--done]               deliverables/RECHERCHE.md
-
-Files (creative-strategist/references/workspace.md): library/research.yaml (the search plan), library/candidates.yaml
-(everything found, with its numbers and score), library/references.yaml (the chosen ones, coded AL/TT/IG/YT/CL),
-References/<Plateforme>/<CODE>_<PAYS|LANGUE>_<nom>_<id>.<ext>, References/Transcripts/, Frames/, Analyses/, _sheets/,
-library/voice/ (comments: buying intent, objections, the customers' words), audit.yaml (the research checks).
-
-Édition sous licence : seules les commandes analyse, discover, download, frames, import, paste, sheet, transcribe, voice tournent ici ; les autres partent sur le serveur de licence."""
-import argparse
-import datetime as dt
-import json
-import os
-import re
-import shutil
-import subprocess
-import sys
-import time
-import unicodedata
-import urllib.error
-import urllib.parse
-import urllib.request
-from pathlib import Path
-HERE = Path(__file__).resolve().parent
-SUITE = HERE.parent.parent / 'creative-strategist' / 'scripts'
-if not (SUITE / 'ws.py').exists():
-    print(f'ERREUR : le skill creative-strategist doit être installé à côté de cs-research (attendu : {SUITE}).', file=sys.stderr)
-    sys.exit(2)
-sys.path.insert(0, str(SUITE))
-import ws as W
-import kinds as K
-from ws import WsError, open_ws, load_yaml, dump_yaml, journal, refresh, today, read_text
-PROMPT = HERE.parent / 'templates' / 'analyse_prompt.md'
-PLATFORMS = {'adlib': ('AL', 'AdLibrary'), 'tiktok': ('TT', 'TikTok'), 'instagram': ('IG', 'Instagram'), 'youtube': ('YT', 'YouTube'), 'client': ('CL', 'Client')}
-FR_COUNTRIES = {'SN', 'CI', 'CM', 'BJ', 'TG', 'ML', 'BF', 'GN', 'NE', 'CD', 'CG', 'GA', 'TD', 'MG', 'FR', 'BE', 'CH', 'CA', 'MA', 'TN', 'DZ', 'HT', 'RW', 'BI', 'CF', 'DJ', 'KM', 'MR'}
-EN_COUNTRIES = {'US', 'GB', 'UK', 'NG', 'GH', 'KE', 'ZA', 'UG', 'TZ', 'AU', 'IE', 'IN', 'PH', 'LR', 'SL', 'GM', 'ZM', 'ZW'}
-ACTORS = {'adlib': 'apify~facebook-ads-scraper', 'tiktok': 'clockworks~tiktok-scraper', 'instagram': 'apify~instagram-scraper'}
-APIFY_PRICE_PER_1000 = {'adlib': 5.8, 'tiktok': 4.0, 'instagram': 2.7}
-GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-pro')
-INTENT_PHRASES = ['\\bprix\\b', '\\btarif', '\\bcombien\\b(?! de (?:temps|jours|semaines|mois|fois))', '\\bfcfa\\b|\\bcfa\\b|\\bgnf\\b', "\\bou (?:on )?(?:peut|puis|pourrais)[- ](?:je |on )?(?:l'?)?(?:acheter|avoir|trouver|commander)", '\\bou (?:est|se trouve) (?:la boutique|le magasin|votre boutique)', '\\bvous livrez\\b|\\blivr(?:ez|aison|er|e) (?:a|au|en|sur)\\b', "\\bje (?:la |le |les )?veux\\b|\\bj'en veux\\b|\\bje voudrais (?:en |l'?)?(?:avoir|acheter|commander)", '\\binteress[ée]e?s?\\b', "\\bcomment (?:commander|l'avoir|en avoir|acheter)\\b", '\\ble lien\\b|\\bun lien\\b|\\blink\\b', '\\bnumero\\b|\\bwhatsapp\\b|\\binbox\\b|\\bdm\\b', '\\bdisponible\\b.*\\?', '\\bcommander\\b', '\\bhow much\\b', '\\bprice\\b', '\\bwhere (?:can|do) i (?:get|buy|order)\\b', '\\bdo you (?:deliver|ship)\\b', '\\binterested\\b', '\\bi want (?:one|it|this|to buy)\\b', '\\bhow (?:can|do) i (?:order|get)\\b']
-OBJECTIONS = K.OBJECTIONS['product']
-
-def slug(s, n=20):
-    """A file-name part: accents dropped, letters and digits only (Windows, Drive and editors all accept it)."""
-    s = unicodedata.normalize('NFKD', str(s or ''))
-    s = ''.join((c for c in s if not unicodedata.combining(c)))
-    s = re.sub('[^A-Za-z0-9]+', '-', s).strip('-')
-    return s[:n].strip('-') or 'x'
-
-def fold(s):
-    """Lower case, accents dropped, apostrophes unified: for matching words people type."""
-    s = unicodedata.normalize('NFKD', str(s or '').lower().replace('’', "'"))
-    return ''.join((ch for ch in s if not unicodedata.combining(ch)))
-
-def days_between(a, b=None):
-    try:
-        start = dt.date.fromisoformat(str(a)[:10])
-        end = dt.date.fromisoformat(str(b)[:10]) if b else dt.date.today()
-        return max(0, (end - start).days)
-    except ValueError:
-        return None
-
-def lang_of_country(cc):
-    cc = (cc or '').upper()
-    return 'fr' if cc in FR_COUNTRIES else 'en' if cc in EN_COUNTRIES else None
-
-def files(P):
-    lib = P['root'] / 'library'
-    return {'plan': lib / 'research.yaml', 'cands': lib / 'candidates.yaml', 'refs': P['refs_index'], 'raw': lib / 'research', 'voice': lib / 'voice'}
-
-def load_list(path, key):
-    data = load_yaml(path, {}) or {}
-    if not isinstance(data, dict):
-        raise WsError(f"{path.name} n'a pas la bonne forme (il faut « {key}: [...] »)")
-    if not isinstance(data.get(key), list):
-        data[key] = []
-    return data
-
-def save_refs(path, data):
-    """Write references.yaml without losing what another command wrote meanwhile (01/11/2026: transcribe, running
-    in the background, rewrote the file from its memory and erased 15 references that pick had just added).
-    Re-read the file just before writing: a reference missing here is kept, and a field missing here is kept."""
-    try:
-        disk = load_list(path, 'references')['references'] if path.exists() else []
-    except Exception:
-        disk = []
-    mine = {r.get('code'): r for r in data['references'] if r.get('code')}
-    for r in disk:
-        c = r.get('code')
-        if c and c not in mine:
-            data['references'].append(r)
-        elif c:
-            for (k, v) in r.items():
-                mine[c].setdefault(k, v)
-    data['references'].sort(key=lambda r: (str(r.get('code') or '')[:2], int(re.sub('\\D', '', str(r.get('code') or '')) or 0)))
-    dump_yaml(path, data)
-
-def cand_key(platform, cid):
-    return f'{platform}:{cid}'
-
-def ref_by_code(refs, code):
-    return next((r for r in refs if str(r.get('code')) == code.upper()), None)
-
-def adlib_search_url(country, term):
-    q = urllib.parse.quote(term)
-    return f'https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={country}&is_targeted_country=false&media_type=all&q={q}&search_type=keyword_unordered&sort_data[mode]=total_impressions&sort_data[direction]=desc'
-MEDIA_EXT = ('.mp4', '.mov', '.webm', '.jpg', '.jpeg', '.png', '.webp')
-
-def media_files(P, ref):
-    sub = P['refs_dir'] / PLATFORMS[ref['platform']][1]
-    base = ref.get('base') or ''
-    return sorted((f for f in sub.glob(base + '*') if f.suffix.lower() in MEDIA_EXT))
-
-def is_video(path):
-    return str(path).lower().endswith(('.mp4', '.mov', '.webm'))
-
-def readable(path):
-    """True when the file really is a picture or a video (a download can be an error page)."""
-    try:
-        if is_video(path):
-            import av
-            with av.open(str(path)) as c:
-                return bool(c.streams.video)
-        from PIL import Image
-        with Image.open(path) as im:
-            im.verify()
-        return True
-    except Exception:
-        return False
-
-def running_days(c):
-    """From the start date to the end date, or to today when still running: recomputed each time, never frozen."""
-    if not c.get('started_on'):
-        return c.get('running_days')
-    return days_between(c['started_on'], c.get('ended_on'))
-
-def save_plan(F, plan):
-    dump_yaml(F['plan'], plan)
-
-def card_text(c, snap, cards):
-    """The ad's text; dynamic ads (DCO) carry « {{product.brand}} » templates in the body, the cards hold the text."""
-    body = snap.get('body')
-    t = c.get('text') or (body.get('text') if isinstance(body, dict) else body) or ''
-    if not t or '{{' in str(t):
-        t = next((x.get('body') for x in cards if x.get('body') and '{{' not in str(x.get('body'))), t)
-    return str(t or '')
-
-def norm_adlib_card(c, term, country):
-    cid = str(c.get('id') or c.get('adArchiveID') or c.get('adArchiveId') or '')
-    snap = c.get('snapshot') or {}
-    cards = snap.get('cards') or []
-    first = cards[0] if cards else {}
-    videos = snap.get('videos') or []
-    images = snap.get('images') or []
-    video = first.get('videoHdUrl') or first.get('videoSdUrl') or (videos[0].get('videoHdUrl') if videos else None) or c.get('video_src')
-    image = first.get('originalImageUrl') or first.get('resizedImageUrl') or (images[0].get('originalImageUrl') if images else None) or c.get('image')
-    start = c.get('start') or (c.get('startDateFormatted') or '')[:10] or None
-    if isinstance(c.get('startDate'), (int, float)):
-        start = dt.datetime.utcfromtimestamp(c['startDate']).date().isoformat()
-    end = None
-    if c.get('isActive') is False or c.get('is_active') is False:
-        end = (c.get('endDateFormatted') or '')[:10] or None
-        if isinstance(c.get('endDate'), (int, float)):
-            end = dt.datetime.utcfromtimestamp(c['endDate']).date().isoformat()
-    link = (c.get('links') or [None])[0] or first.get('linkUrl') or snap.get('linkUrl')
-    fmt_ = c.get('format') if c.get('format') in ('video', 'image', 'carousel') else {'V': 'video', 'I': 'image'}.get(c.get('format'), '')
-    if not fmt_:
-        fmt_ = 'video' if video else 'image' if image else ''
-    if len([x for x in cards if x.get('originalImageUrl') or x.get('resizedImageUrl')]) > 1 and (not video):
-        fmt_ = 'carousel'
-    out = {'key': cand_key('adlib', cid), 'platform': 'adlib', 'id': cid, 'url': f'https://www.facebook.com/ads/library/?id={cid}', 'author': c.get('advertiser') or snap.get('pageName') or c.get('pageName') or '', 'country': country, 'lang': lang_of_country(country), 'term': term, 'started_on': start, 'ended_on': end, 'versions': c.get('versions') or c.get('collationCount'), 'format': fmt_, 'text': card_text(c, snap, cards)[:600], 'landing_url': link, 'media_url': video, 'image_url': image if not video else None, 'image_urls': [x.get('originalImageUrl') or x.get('resizedImageUrl') for x in cards if x.get('originalImageUrl') or x.get('resizedImageUrl')][:10] if fmt_ == 'carousel' else None}
-    if c.get('page'):
-        out['page'] = c['page']
-    out['landing_domain'] = landing_domain(link)
-    out['running_days'] = running_days(out)
-    if not term and out['author']:
-        out['term'] = out['author']
-    if REMOVED_AD.search(out['text'] or ''):
-        out['removed'] = True
-    return out
-
-def landing_domain(url):
-    """The landing site without www, tracking or path: « smartgainia.tech » for http://www.smartgainia.tech/atelier?x=1;
-    a Facebook redirect (l.facebook.com/l.php?u=…) is unwrapped first."""
-    if not url:
-        return ''
-    u = str(url)
-    m = re.search('[?&]u=(https?[^&]+)', u)
-    if m:
-        from urllib.parse import unquote
-        u = unquote(m.group(1))
-    m = re.match('https?://([^/?#]+)', u.strip())
-    host = (m.group(1) if m else '').lower()
-    return host[4:] if host.startswith('www.') else host
-REMOVED_AD = re.compile('Standards publicitaires|ne respectait pas nos|advertising standards|violat(ed|ing) our', re.I)
-
-def norm_tiktok(x, term, lang):
-    a = x.get('authorMeta') or x.get('author') or {}
-    a = a if isinstance(a, dict) else {}
-    author = a.get('name') or a.get('uniqueId') or x.get('authorMeta.name') or x.get('a') or ''
-    st = x.get('stats') or {}
-    g = lambda *ks: next((x.get(k) for k in ks if x.get(k) is not None), None) if any((x.get(k) is not None for k in ks)) else next((st.get(k) for k in ks if st.get(k) is not None), None)
-    cid = str(x.get('id') or '')
-    url = x.get('webVideoUrl') or x.get('url') or (f'https://www.tiktok.com/@{author}/video/{cid}' if author and cid else '')
-    created = x.get('createTimeISO')
-    for k in ('createTime', 't'):
-        if not created and isinstance(x.get(k), (int, float)):
-            created = dt.datetime.utcfromtimestamp(x[k]).isoformat()
-    vm = x.get('videoMeta') or x.get('video') or {}
-    dur = vm.get('duration') if isinstance(vm, dict) else None
-    slides = x.get('slideshowImageLinks') or ((x.get('imagePost') or {}).get('images') if isinstance(x.get('imagePost'), dict) else None)
-    is_slides = bool(slides or x.get('isSlideshow') or x.get('images'))
-    tl = x.get('lang') or x.get('textLanguage')
-    return {'key': cand_key('tiktok', cid), 'platform': 'tiktok', 'id': cid, 'url': url, 'author': author, 'country': x.get('locationCreated') or '', 'lang': lang or (tl if tl and tl not in ('un', 'und') else None), 'term': term, 'created_on': (created or '')[:10] or None, 'views': g('playCount', 'p'), 'likes': g('diggCount', 'l'), 'comments': g('commentCount', 'c'), 'saves': g('collectCount', 's'), 'shares': g('shareCount', 'sh'), 'duration': dur or x.get('d'), 'format': 'carousel' if is_slides else 'video', 'text': str(x.get('text') or x.get('desc') or '')[:600], 'is_ad': bool(x.get('isAd')), 'image_urls': [s.get('downloadLink') or s.get('url') if isinstance(s, dict) else s for s in slides][:12] if slides else None}
-
-def norm_instagram(x, term, lang):
-    cid = str(x.get('shortCode') or x.get('id') or '')
-    return {'key': cand_key('instagram', cid), 'platform': 'instagram', 'id': cid, 'url': x.get('url') or f'https://www.instagram.com/reel/{cid}/', 'author': x.get('ownerUsername') or '', 'country': '', 'lang': lang, 'term': term, 'created_on': (x.get('timestamp') or '')[:10] or None, 'views': x.get('videoPlayCount') or x.get('videoViewCount'), 'likes': x.get('likesCount'), 'comments': x.get('commentsCount'), 'duration': x.get('videoDuration'), 'format': 'video' if x.get('type') in ('Video', 'Reel') or x.get('videoUrl') else 'carousel' if x.get('type') == 'Sidecar' else 'image', 'text': str(x.get('caption') or '')[:600], 'media_url': x.get('videoUrl'), 'image_url': x.get('displayUrl')}
-
-def norm_url(u, term, lang, country):
-    """A link pasted alone: the --country given at import stands for every platform (a TikTok link has none)."""
-    c = _norm_url(u, term, lang, country)
-    if c is not None and (not c.get('country')) and country:
-        c['country'] = country
-    return c
-
-def _norm_url(u, term, lang, country):
-    u = u.strip().rstrip('.,;)')
-    m = re.search('facebook\\.com/ads/library/?\\?(?:.*&)?id=(\\d+)', u)
-    if m:
-        return norm_adlib_card({'id': m.group(1)}, term, country)
-    m = re.search('tiktok\\.com/@([^/]+)/(?:video|photo)/(\\d+)', u)
-    if m:
-        c = norm_tiktok({'id': m.group(2), 'authorMeta': {'name': m.group(1)}, 'webVideoUrl': u.split('?')[0]}, term, lang)
-        if '/photo/' in u:
-            c['format'] = 'carousel'
-        return c
-    m = re.search('instagram\\.com/(?:reel|p|reels)/([\\w-]+)', u)
-    if m:
-        return norm_instagram({'shortCode': m.group(1), 'url': u.split('?')[0]}, term, lang)
-    m = re.search('(?:youtube\\.com/(?:shorts/|watch\\?v=)|youtu\\.be/)([\\w-]{6,})', u)
-    if m:
-        return {'key': cand_key('youtube', m.group(1)), 'platform': 'youtube', 'id': m.group(1), 'url': u.split('&')[0], 'author': '', 'country': country, 'lang': lang, 'term': term, 'format': 'video', 'text': ''}
-    return None
-
-def kind_of(item):
-    """Which source an item comes from, item by item (an Apify dataset may hold error items)."""
-    if not isinstance(item, dict) or item.get('error') or item.get('errorDescription'):
-        return None
-    if 'adArchiveID' in item or 'adArchiveId' in item or 'snapshot' in item:
-        return 'adlib'
-    if 'webVideoUrl' in item or 'playCount' in item or 'authorMeta' in item:
-        return 'tiktok'
-    if 'shortCode' in item or 'ownerUsername' in item:
-        return 'instagram'
-    return None
-
-def parse_capture(data, term, country, lang):
-    """Every format the suite produces or receives, to one list of candidates, plus the number of items skipped."""
-    if isinstance(data, dict) and isinstance(data.get('result'), (dict, list)):
-        data = data['result']
-    (out, skipped) = ([], 0)
-    if isinstance(data, dict) and data.get('probe') == 'batch':
-        for cap in data.get('captures') or []:
-            (o, s) = parse_capture(cap, term, country, lang)
-            out += o
-            skipped += s
-        return (out, skipped)
-    if isinstance(data, dict) and data.get('probe') == 'adlib':
-        q = urllib.parse.parse_qs(urllib.parse.urlparse(data.get('url', '')).query)
-        country = country or (q.get('country') or [''])[0]
-        term = term or (q.get('q') or [''])[0]
-        for c in data.get('cards') or []:
-            out.append(norm_adlib_card(dict(c, advertiser=c.get('advertiser') or data.get('advertiser')), term, country))
-    elif isinstance(data, dict) and data.get('probe') == 'instagram':
-        for x in data.get('items') or []:
-            out.append(norm_instagram(x, x.get('term') or term or data.get('term') or '', lang))
-    elif isinstance(data, dict) and data.get('probe') == 'tiktok':
-        term = term or data.get('term') or ''
-        for x in data.get('items') or []:
-            out.append(norm_tiktok(x, x.get('q') or term, lang))
-    elif isinstance(data, list):
-        for item in data:
-            k = kind_of(item)
-            if k == 'adlib':
-                q = urllib.parse.parse_qs(urllib.parse.urlparse(item.get('inputUrl') or '').query)
-                out.append(norm_adlib_card(item, term or (q.get('q') or [''])[0], country or (q.get('country') or [''])[0]))
-            elif k == 'tiktok':
-                out.append(norm_tiktok(item, term or item.get('searchQuery') or '', lang))
-            elif k == 'instagram':
-                out.append(norm_instagram(item, term, lang))
-            else:
-                skipped += 1
-    elif isinstance(data, dict) and data and all((isinstance(v, dict) for v in data.values())):
-        for (cid, v) in data.items():
-            if 'adv' in v or 'ver' in v:
-                out.append(norm_adlib_card({'id': cid, 'advertiser': v.get('adv'), 'text': v.get('body'), 'versions': int(v['ver']) if str(v.get('ver') or '').isdigit() else None, 'format': v.get('f'), 'video_src': v.get('vs')}, v.get('k') or term, country))
-            elif 'p' in v or 'a' in v:
-                out.append(norm_tiktok(dict(v, id=cid), v.get('q') or term, lang))
-            else:
-                skipped += 1
-    return ([c for c in out if c and c.get('id')], skipped)
-
-def fill_langs(found, plan):
-    """A video's language: the capture's, else the search it came from, else its country."""
-    langs = {(q.get('platform'), q.get('term')): q.get('lang') for q in plan.get('queries') or [] if q.get('lang')}
-    by_term = {q.get('term'): q.get('lang') for q in plan.get('queries') or [] if q.get('lang')}
-    missing = 0
-    for c in found:
-        if not c.get('lang'):
-            c['lang'] = langs.get((c['platform'], c.get('term'))) or by_term.get(c.get('term')) or lang_of_country(c.get('country'))
-        if not c.get('lang') and c['platform'] != 'adlib':
-            missing += 1
-    return missing
-
-def merge_candidates(P, found, source):
-    F = files(P)
-    data = load_list(F['cands'], 'candidates')
-    by = {c['key']: c for c in data['candidates'] if isinstance(c, dict) and c.get('key')}
-    new = upd = 0
-    for c in found:
-        c = {k: v for (k, v) in c.items() if v not in (None, '', [])}
-        c['source'] = source
-        old = by.get(c['key'])
-        if old:
-            for (k, v) in c.items():
-                if k in ('status', 'code', 'reason', 'found_on'):
-                    continue
-                if k in ('views', 'likes', 'comments', 'saves', 'shares', 'versions') and isinstance(old.get(k), (int, float)) and isinstance(v, (int, float)):
-                    old[k] = max(old[k], v)
-                elif k == 'text' and len(str(old.get('text') or '')) > len(str(v)):
-                    continue
-                else:
-                    old[k] = v
-            upd += 1
-        else:
-            c.update({'found_on': today(), 'status': 'rejected' if c.get('removed') else 'new'})
-            if c.get('removed'):
-                c['reason'] = 'retirée par Meta (Standards publicitaires) : rien à recopier'
-            data['candidates'].append(c)
-            by[c['key']] = c
-            new += 1
-    dump_yaml(F['cands'], data)
-    return (new, upd)
-
-def read_clipboard():
-    """The clipboard's text: PowerShell on Windows, pbpaste on a Mac, xclip or xsel elsewhere."""
-    if W.WIN:
-        cmd = ['powershell', '-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw']
-    elif sys.platform == 'darwin':
-        cmd = ['pbpaste']
-    else:
-        cmd = ['xclip', '-selection', 'clipboard', '-o'] if shutil.which('xclip') else ['xsel', '-b', '-o']
-    try:
-        r = subprocess.run(cmd, capture_output=True, timeout=30)
-    except Exception as e:
-        raise WsError(f'le presse-papier ne se lit pas ({type(e).__name__})')
-    return r.stdout.decode('utf-8', 'replace').strip()
-
-def cmd_paste(a):
-    """A browser capture copied with the COPIER button: saved in library/research/ (or where --save says), then
-    imported as candidates, or counted as comments. Nothing big goes through the conversation."""
-    (P, ws, state) = open_ws(a.folder)
-    raw = read_clipboard()
-    try:
-        data = json.loads(raw)
-    except ValueError:
-        raise WsError("le presse-papier ne contient pas une capture : clique d'abord sur le bouton vert COPIER (un vrai clic), puis relance research.py paste")
-    data = json.loads(json.dumps(data, ensure_ascii=False).encode('utf-8', 'replace').decode('utf-8'))
-    probe = data.get('probe') if isinstance(data, dict) else 'list'
-    import hashlib
-    mark = files(P)['raw'] / '.derniere-capture'
-    digest = hashlib.sha256(raw.encode('utf-8', 'replace')).hexdigest()
-    if not a.again and mark.exists() and (mark.read_text(encoding='utf-8').strip() == digest):
-        raise WsError("c'est la même capture que la précédente : le clic sur COPIER n'a pas copié. Reclique sur le bouton vert (un vrai clic), puis relance ; --again pour l'importer quand même")
-    stamp = time.strftime('%Y%m%d-%H%M%S')
-    if a.save:
-        dest = Path(a.save) if Path(a.save).is_absolute() else P['root'] / a.save
-    else:
-        tag = {'adlib': 'adlib', 'tiktok': 'tiktok', 'instagram': 'instagram', 'tiktok_comments': 'comments', 'comments': 'comments', 'batch': 'adlib'}.get(probe, 'capture')
-        dest = files(P)['raw'] / f'{tag}-{stamp}.json'
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + '.tmp')
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding='utf-8')
-    tmp.replace(dest)
-    mark.parent.mkdir(parents=True, exist_ok=True)
-    mark.write_text(digest, encoding='utf-8')
-    print(f"Capture enregistrée : {(dest.relative_to(P['root']) if dest.is_relative_to(P['root']) else dest)} ({len(raw) // 1024} Ko)")
-    if a.save:
-        return
-    if probe in ('tiktok_comments', 'comments'):
-        cmd_intent(argparse.Namespace(folder=a.folder, file=str(dest)))
-    elif probe in ('adlib', 'tiktok', 'instagram', 'list', 'batch'):
-        cmd_import(argparse.Namespace(folder=a.folder, file=str(dest), term=a.term, country=a.country, lang=a.lang))
-    else:
-        print("Format inconnu : gardé tel quel, rien d'importé.")
-
-def cmd_import(a):
-    (P, ws, state) = open_ws(a.folder)
-    src = Path(a.file).expanduser()
-    if not src.exists() and (P['root'] / a.file).exists():
-        src = P['root'] / a.file
-    if not src.exists():
-        raise WsError(f'fichier introuvable : {a.file}')
-    raw = src.read_text(encoding='utf-8-sig')
-    skipped = 0
-    if src.suffix.lower() in ('.txt', '.csv') or not raw.lstrip().startswith(('{', '[')):
-        found = [norm_url(u, a.term or '', a.lang, (a.country or '').upper()) for u in re.findall('https?://\\S+', raw)]
-        found = [f for f in found if f]
-        source = 'liens'
-    else:
-        (found, skipped) = parse_capture(json.loads(raw), a.term or '', (a.country or '').upper(), a.lang)
-        source = 'apify' if 'apify' in src.name.lower() else 'navigateur'
-    if not found:
-        raise WsError(f'{src.name} : aucun candidat reconnu (sonde adlib_links.js, tiktok_capture.js, export Apify ou liste de liens)' + (f" ; {skipped} élément(s) d'erreur ou inconnu(s) écarté(s)" if skipped else ''))
-    F = files(P)
-    plan = load_yaml(F['plan'], {}) or {}
-    no_lang = fill_langs(found, plan)
-    F['raw'].mkdir(parents=True, exist_ok=True)
-    keep = F['raw'] / src.name
-    if src.resolve() != keep.resolve() and (not keep.exists()):
-        shutil.copy2(src, keep)
-    (new, upd) = merge_candidates(P, found, source)
-    for q in plan.get('queries') or []:
-        hits = [c for c in found if c.get('term') == q.get('term') and c['platform'] == q.get('platform') and (q['platform'] != 'adlib' or c.get('country') == q.get('country'))]
-        if hits and q.get('status') != 'done':
-            (q['status'], q['found']) = ('done', len(hits))
-    if plan:
-        save_plan(F, plan)
-    journal(P, f'Recherche importée ({src.name}) : {new} nouveau(x) candidat(s), {upd} mis à jour')
-    refresh(P, ws, state)
-    by_p = {}
-    for c in found:
-        by_p[c['platform']] = by_p.get(c['platform'], 0) + 1
-    print(f"{src.name} : {len(found)} candidats ({', '.join((f'{k} {v}' for (k, v) in by_p.items()))}), {new} nouveaux, {upd} mis à jour. Suite : research.py rank <dossier>")
-    if skipped:
-        print(f"  {skipped} élément(s) écarté(s) : erreurs de l'outil ou format inconnu")
-    gone = sum((1 for c in found if c.get('removed')))
-    if gone:
-        print(f"  {gone} pub(s) retirée(s) par Meta : écartées du classement (l'angle est risqué pour un compte neuf)")
-    if no_lang:
-        print(f"  {no_lang} vidéo(s) sans langue : la recherche d'origine n'est pas dans le plan ; relance avec --lang fr|en")
-
-def apify_input(platform, q, limit, ws):
-    if platform == 'adlib':
-        return {'startUrls': [{'url': q.get('url') or adlib_search_url(q['country'], q['term'])}], 'resultsLimit': limit, 'activeStatus': 'active'}
-    if platform == 'tiktok':
-        inp = {'searchQueries': [q['term']], 'resultsPerPage': limit, 'searchSection': '/video', 'shouldDownloadVideos': False, 'shouldDownloadCovers': False, 'commentsPerPost': 0}
-        market = next((m.get('code') for m in ws.get('markets') or [] if isinstance(m, dict) and m.get('code')), None)
-        if market:
-            inp['proxyCountryCode'] = market
-        return inp
-    return {'search': q['term'].replace(' ', ''), 'searchType': 'hashtag', 'searchLimit': 1, 'resultsType': 'posts', 'resultsLimit': limit}
-
-def apify_call(method, url, body=None, timeout=90):
-    req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None, method=method, headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode('utf-8'))
-
-def apify_run(actor, inp, token, q, plan_saver):
-    """Start a run, keep its id in the plan (paid results are never lost), wait for it, read its dataset."""
-    base = 'https://api.apify.com/v2'
-    if q.get('run_id') and q.get('status') == 'running':
-        run = apify_call('GET', f"{base}/actor-runs/{q['run_id']}?token={token}")['data']
-    else:
-        run = apify_call('POST', f'{base}/acts/{actor}/runs?token={token}', inp)['data']
-        q.update({'run_id': run['id'], 'dataset_id': run.get('defaultDatasetId'), 'status': 'running'})
-        plan_saver()
-    for _ in range(120):
-        if run.get('status') in ('SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT'):
-            break
-        run = apify_call('GET', f"{base}/actor-runs/{run['id']}?token={token}&waitForFinish=10", timeout=40)['data']
-    if run.get('status') != 'SUCCEEDED':
-        raise RuntimeError(f"run {run.get('status', '?')}")
-    ds = run.get('defaultDatasetId') or q.get('dataset_id')
-    return apify_call('GET', f'{base}/datasets/{ds}/items?clean=true&format=json&token={token}', timeout=120)
-
-def cmd_discover(a):
-    (P, ws, state) = open_ws(a.folder)
-    F = files(P)
-    plan = load_yaml(F['plan'], {}) or {}
-    queries = plan.setdefault('queries', [])
-    mine = [q for q in queries if not a.platform or q['platform'] == a.platform]
-    todo = [q for q in mine if q.get('status') in ('todo', 'running', 'empty') or a.all]
-    if not todo and a.dry_run:
-        todo = mine
-    if not todo:
-        raise WsError("aucune recherche à faire dans library/research.yaml : lance d'abord research.py plan (ou --all pour refaire les recherches faites)")
-    est = sum((a.limit * APIFY_PRICE_PER_1000.get(q['platform'], 5) / 1000 for q in todo))
-    if a.dry_run:
-        for q in todo:
-            print(f"{ACTORS[q['platform']]} ← {json.dumps(apify_input(q['platform'], q, a.limit, ws), ensure_ascii=False)}")
-        print(f'{len(todo)} recherche(s) × {a.limit} résultats : environ {est:.2f} $ au plus (tarifs hauts lus le 28/10/2026).')
-        return
-    token = os.environ.get('APIFY_TOKEN') or W.env_state('APIFY_TOKEN')[1]
-    if not token:
-        raise WsError('APIFY_TOKEN absent : la recherche passe par le navigateur (references/search.md), ou enregistre le jeton (references/apify.md) puis relance')
-    if not a.yes:
-        raise WsError(f'{len(todo)} recherche(s) × {a.limit} résultats ≈ {est:.2f} $ au plus sur le crédit Apify. Relance avec --yes pour lancer, ou --limit plus petit')
-    F['raw'].mkdir(parents=True, exist_ok=True)
-    total = 0
-    for q in todo:
-        actor = ACTORS[q['platform']]
-        try:
-            items = apify_run(actor, apify_input(q['platform'], q, a.limit, ws), token, q, lambda : save_plan(F, plan))
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode('utf-8', 'replace')[:160]
-            save_plan(F, plan)
-            if e.code in (401, 402, 403):
-                raise WsError(f'Apify refuse (HTTP {e.code}) : jeton faux ou crédit épuisé. Les recherches déjà faites sont gardées ; continue au navigateur (ws.py set <dossier> engines.discover=browser)')
-            print(f"  {q['platform']} « {q['term']} » : Apify répond HTTP {e.code} {detail} ; on passe à la suivante")
-            continue
-        except Exception as e:
-            save_plan(F, plan)
-            print(f"  {q['platform']} « {q['term']} » : pas de résultat ({type(e).__name__} : {str(e)[:80]}) ; " + ('la course est notée, relance discover pour la reprendre' if q.get('run_id') else 'on passe à la suivante'))
-            continue
-        name = f"apify-{q['platform']}-{slug(q.get('country') or 'all', 4)}-{slug(q['term'], 24)}-{today()}.json"
-        (F['raw'] / name).write_text(json.dumps(items, ensure_ascii=False), encoding='utf-8')
-        (found, skipped) = parse_capture(items, q['term'], q.get('country', ''), q.get('lang'))
-        fill_langs(found, plan)
-        (new, _) = merge_candidates(P, found, 'apify')
-        q.update({'status': 'done' if found else 'empty', 'found': len(found), 'engine': 'apify', 'done_on': today()})
-        save_plan(F, plan)
-        total += len(found)
-        print(f"  {q['platform']}{(' ' + q['country'] if q.get('country') else '')} « {q['term']} » : {len(found)} résultats, {new} nouveaux" + (f", {skipped} élément(s) d'erreur écarté(s)" if skipped else '') + ('' if found else ' — rien : essaie ce mot au navigateur'))
-    journal(P, f'Recherche Apify : {total} résultats sur {len(todo)} recherche(s)')
-    refresh(P, ws, state)
-
-def short_metric(c):
-    if c.get('platform') == 'adlib':
-        d = running_days(c)
-        s = (f'{d} j' if d is not None else '? j') + (' (arrêtée)' if c.get('ended_on') else '')
-        return s + (f" · {c['versions']} versions" if c.get('versions') else '')
-    v = c.get('views')
-    s = '? vues' if v is None else f'{v / 1000000.0:.1f} M vues'.replace('.', ',') if v >= 999500 else f'{v / 1000:.0f} k vues' if v >= 1000 else f'{v} vues'
-    if v is None and c.get('likes') is not None:
-        s = f"{c['likes']} j'aime (vues inconnues)"
-    if c.get('comments'):
-        s += f" · {c['comments']} comm."
-    if (c.get('intent') or {}).get('read'):
-        s += f" · achat {c['intent']['buying']}/{c['intent']['read']}"
-    return s
-
-def cmd_voice(a):
-    """1.6: the customers' words read elsewhere (a YouTube comments export in JSON, a text or Markdown file) go into
-    library/voice, the source in the file name, so the avatars' lexique can be checked against them."""
-    (P, ws, state) = open_ws(a.folder)
-    src = Path(a.file)
-    if not src.exists():
-        raise WsError(f'fichier introuvable : {src}')
-    raw = read_text(src)
-    lines = []
-    if src.suffix.lower() == '.json':
-        try:
-            data = json.loads(raw)
-        except ValueError as e:
-            raise WsError(f'{src.name} : JSON illisible ({e})')
-        TEXT_KEYS = ('text', 'textOriginal', 'textDisplay', 'comment', 'body', 't')
-
-        def walk(x, in_comments=False):
-            if isinstance(x, list):
-                for y in x:
-                    walk(y, in_comments)
-            elif isinstance(x, dict):
-                t = next((x[k] for k in TEXT_KEYS if isinstance(x.get(k), str) and x[k].strip()), '')
-                if t:
-                    likes = x.get('likes') or x.get('likeCount') or x.get('votes')
-                    lines.append(f"- {' '.join(t.split())}" + (f" ({likes} j'aime)" if likes else ''))
-                for (k, v) in x.items():
-                    if isinstance(v, (list, dict)) and k not in TEXT_KEYS:
-                        walk(v, in_comments or k in ('comments', 'replies', 'items'))
-            elif isinstance(x, str) and x.strip() and in_comments:
-                lines.append(f"- {' '.join(x.split())}")
-        walk(data, isinstance(data, list))
-    else:
-        lines = [l.rstrip() for l in raw.splitlines() if l.strip()]
-    if not lines:
-        raise WsError(f"{src.name} : aucun commentaire lu (JSON : une liste d'objets avec « text » ; sinon une ligne par commentaire)")
-    vdir = P['root'] / 'library' / 'voice'
-    vdir.mkdir(parents=True, exist_ok=True)
-    name = f'commentaires-{slug(a.source or src.stem, 40)}-{today()}.md'
-    out = vdir / name
-    out.write_text(f'# Mots des clients — {a.source or src.name}\n\n*Importé le {today()} depuis {src.name}, {len(lines)} lignes.*\n\n' + '\n'.join(lines) + '\n', encoding='utf-8')
-    journal(P, f'Mots des clients importés : {name} ({len(lines)} lignes)')
-    refresh(P, ws, state)
-    print(f'Écrit : library/voice/{name} ({len(lines)} lignes). La stratégie vérifie le lexique des avatars contre ce fichier.')
-
-def lacks_meta(r):
-    """A reference imported by its link, or whose file was already there: no author, date or views yet."""
-    return r.get('platform') in ('tiktok', 'instagram', 'youtube') and bool(r.get('url')) and (not (r.get('author') and (r.get('created_on') or r.get('started_on')) and r.get('views')))
-
-def ffmpeg_exe():
-    """ffmpeg on the PATH, or the copy that comes with imageio-ffmpeg (installed by the suite's setup)."""
-    import shutil
-    if shutil.which('ffmpeg'):
-        return shutil.which('ffmpeg')
-    try:
-        import imageio_ffmpeg
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
-        return ''
-
-def ytdlp(url, out_tmpl, info_only=False):
-    ff = ffmpeg_exe()
-    fmt = 'b[ext=mp4]/bv*[height<=1920][ext=mp4]+ba[ext=m4a]/bv*+ba/b' if ff else 'b[ext=mp4]/b'
-    cmd = [sys.executable, '-m', 'yt_dlp', '--no-playlist', '--write-info-json', '--no-progress', '--quiet', '--no-warnings', '-f', fmt, '-o', out_tmpl, url]
-    if ff:
-        cmd[3:3] = ['--ffmpeg-location', ff, '--merge-output-format', 'mp4']
-    if info_only:
-        cmd.insert(3, '--skip-download')
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=600)
-    except subprocess.TimeoutExpired:
-        return (1, "yt-dlp n'a pas fini en 10 minutes")
-    lines = (r.stderr or r.stdout or '').strip().splitlines()
-    return (r.returncode, lines[-1] if lines else '')
-
-def fetch_file(url, dest, referer=None):
-    headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36'}
-    if referer:
-        headers['Referer'] = referer
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120) as r, open(dest, 'wb') as fh:
-        shutil.copyfileobj(r, fh)
-    if not readable(dest):
-        Path(dest).unlink(missing_ok=True)
-        raise ValueError("le fichier reçu n'est ni une image ni une vidéo")
-
-def _try_fetch(url, dest):
-    """The capture's own media link, tried once: True when a readable file came, False otherwise (expired link)."""
-    try:
-        fetch_file(url, dest, referer='https://www.facebook.com/')
-        return True
-    except Exception:
-        Path(dest).unlink(missing_ok=True)
-        return False
-
-def cmd_download(a):
-    (P, ws, state) = open_ws(a.folder)
-    F = files(P)
-    data = load_list(F['refs'], 'references')
-    want = [c.upper() for c in a.codes]
-    todo = [r for r in data['references'] if isinstance(r, dict) and r.get('platform') in PLATFORMS and (r.get('code') in want if want else (not r.get('file') or lacks_meta(r)) and r.get('status') != 'cite_only')]
-    if not todo:
-        print('Rien à télécharger : toutes les références choisies ont leur fichier.')
-        return
-    try:
-        import yt_dlp
-        have_ytdlp = True
-    except ImportError:
-        have_ytdlp = False
-    ok = fail = 0
-    for r in todo:
-        sub = P['refs_dir'] / PLATFORMS[r['platform']][1]
-        sub.mkdir(parents=True, exist_ok=True)
-        base = r.get('base') or f"{r['code']}_{r['id']}"
-        got = media_files(P, r)
-        err = ''
-        try:
-            if not got and r.get('format') == 'carousel' and (r.get('image_urls') or r.get('image_url')):
-                for (i, u) in enumerate((r.get('image_urls') or [r.get('image_url')])[:12], 1):
-                    fetch_file(u, sub / f'{base}_{i}.jpg', referer='https://www.tiktok.com/' if r['platform'] == 'tiktok' else None)
-            elif not got and r.get('format') == 'image' and r.get('image_url'):
-                fetch_file(r['image_url'], sub / f'{base}.jpg')
-            elif not got and r.get('platform') == 'adlib' and r.get('media_url') and (r.get('format') != 'image') and _try_fetch(r['media_url'], sub / f'{base}.mp4'):
-                pass
-            elif not got and have_ytdlp and r.get('url'):
-                (code, last) = ytdlp(r['url'], str(sub / f'{base}.%(ext)s'))
-                if code != 0 or not media_files(P, r):
-                    err = (last or 'aucun fichier vidéo reçu')[:160]
-                    if r['platform'] == 'tiktok' and r.get('format') == 'carousel':
-                        err += ' ; post photo : récupère les images dans le navigateur (references/pipeline.md)'
-                    if r.get('media_url'):
-                        try:
-                            fetch_file(r['media_url'], sub / f'{base}.mp4', referer='https://www.facebook.com/')
-                            err = ''
-                        except Exception as e:
-                            err += f' ; lien direct : {type(e).__name__}'
-            elif got and have_ytdlp and lacks_meta(r):
-                ytdlp(r['url'], str(sub / f'{base}.%(ext)s'), info_only=True)
-            elif not got and r.get('media_url'):
-                fetch_file(r['media_url'], sub / f'{base}.mp4')
-            elif not got:
-                err = 'yt-dlp absent (pip install yt-dlp) et pas de lien direct'
-        except Exception as e:
-            err = f'{type(e).__name__} : {str(e)[:120]}'
-        got = [g for g in media_files(P, r) if readable(g)]
-        for bad in set(media_files(P, r)) - set(got):
-            bad.unlink(missing_ok=True)
-            err = err or "fichier illisible reçu (page d'erreur au lieu de la vidéo)"
-        info = next(iter(sorted(sub.glob(base + '*.info.json'))), None)
-        if info:
-            try:
-                meta = json.loads(info.read_text(encoding='utf-8'))
-                pairs = [('view_count', 'views'), ('comment_count', 'comments'), ('duration', 'duration')]
-                if r['platform'] != 'adlib':
-                    pairs.append(('like_count', 'likes'))
-                for (k_src, k) in pairs:
-                    if meta.get(k_src) is not None and (not r.get(k)):
-                        r[k] = meta[k_src]
-                if not r.get('text') and meta.get('description'):
-                    r['text'] = meta['description'][:600]
-                if not r.get('author') and (meta.get('uploader') or meta.get('channel') or meta.get('uploader_id')):
-                    r['author'] = meta.get('uploader') or meta.get('channel') or meta.get('uploader_id')
-                ud = str(meta.get('upload_date') or '')
-                if not r.get('created_on') and re.fullmatch('\\d{8}', ud):
-                    r['created_on'] = f'{ud[:4]}-{ud[4:6]}-{ud[6:]}'
-                if not r.get('country') and meta.get('location'):
-                    r['country'] = str(meta['location'])[:2].upper()
-            except (json.JSONDecodeError, OSError):
-                pass
-        if got:
-            r['file'] = str(got[0].relative_to(P['refs_dir'])).replace('\\', '/')
-            if len(got) > 1:
-                r['files'] = [str(g.relative_to(P['refs_dir'])).replace('\\', '/') for g in got]
-            r['status'] = 'downloaded'
-            r.pop('download_error', None)
-            ok += 1
-            print(f"  {r['code']} : {got[0].name}" + (f' (+{len(got) - 1})' if len(got) > 1 else '') + f' ({got[0].stat().st_size // 1024} Ko)')
-        else:
-            r['tries'] = int(r.get('tries') or 0) + 1
-            r['download_error'] = err or 'aucun fichier reçu'
-            if r['tries'] >= 2:
-                r['status'] = 'cite_only'
-            fail += 1
-            print(f"  {r['code']} : échec — {r['download_error']}" + (f" → regarde-la en ligne et analyse-la sans fichier : {r.get('url') or ''}" if r['tries'] >= 2 else ' (nouvel essai possible)'))
-        save_refs(F['refs'], data)
-    if fail:
-        print('Des échecs : mets yt-dlp à jour (python -m pip install -U yt-dlp), il suit les changements des sites, puis relance. Une vidéo qui refuse toujours se regarde en ligne : son lien est dans REFERENCES_LOG.xlsx.')
-    journal(P, f'Téléchargements : {ok} réussi(s), {fail} échec(s)')
-    refresh(P, ws, state)
-    print(f'{ok} téléchargé(s), {fail} échec(s). Suite : research.py transcribe <dossier>')
-
-def has_audio(path):
-    try:
-        import av
-        with av.open(str(path)) as c:
-            return any((s.type == 'audio' for s in c.streams))
-    except Exception:
-        return True
-
-def ffmpeg_audio(src):
-    """The sound of a video as 16 kHz mono samples, decoded by ffmpeg (the system's, or imageio-ffmpeg's) instead of
-    PyAV. None when neither ffmpeg nor numpy is there."""
-    try:
-        import numpy as np
-    except ImportError:
-        return None
-    exe = shutil.which('ffmpeg')
-    if not exe:
-        try:
-            import imageio_ffmpeg
-            exe = imageio_ffmpeg.get_ffmpeg_exe()
-        except Exception:
-            return None
-    try:
-        out = subprocess.run([exe, '-nostdin', '-v', 'error', '-i', str(src), '-f', 'f32le', '-ac', '1', '-ar', '16000', '-'], capture_output=True, timeout=600)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if out.returncode != 0 or not out.stdout:
-        return None
-    return np.frombuffer(out.stdout, dtype=np.float32).copy()
-
-def guess_language(model, src, allowed):
-    """The most likely language of the first 30 seconds, among the allowed ones only (French first when unsure)."""
-    try:
-        try:
-            from faster_whisper import decode_audio
-            audio = decode_audio(str(src), sampling_rate=16000)[:16000 * 30]
-        except Exception:
-            audio = ffmpeg_audio(src)
-            if audio is None:
-                raise
-            audio = audio[:16000 * 30]
-        (_, _, probs) = model.detect_language(audio)
-        best = max(((l, p) for (l, p) in probs if l in allowed), key=lambda x: x[1], default=None)
-        return best[0] if best else 'fr'
-    except Exception:
-        return 'fr' if 'fr' in allowed else sorted(allowed)[0]
-
-def cmd_transcribe(a):
-    (P, ws, state) = open_ws(a.folder)
-    F = files(P)
-    data = load_list(F['refs'], 'references')
-    out_dir = P['refs_dir'] / 'Transcripts'
-    out_dir.mkdir(parents=True, exist_ok=True)
-    want = [c.upper() for c in a.codes]
-    refs = [r for r in data['references'] if isinstance(r, dict) and r.get('file') and is_video(r['file']) and (not want or r.get('code') in want)]
-    redo = 0
-    for r in refs:
-        t = r.get('transcript')
-        if not t:
-            continue
-        f = P['refs_dir'] / t
-        header = read_text(f).splitlines()[0] if f.exists() and f.stat().st_size > 0 else ''
-        if getattr(a, 'redo', False) or not header or ('model=base' in header and a.model != 'base'):
-            for k in ('transcript', 'has_voice', 'words'):
-                r.pop(k, None)
-            if header and f.exists():
-                f.unlink()
-            redo += 1
-    if redo:
-        save_refs(F['refs'], data)
-        print(f'{redo} transcription(s) à refaire (fichier absent, modèle « base », ou --redo).')
-    adopted = 0
-    for r in refs:
-        if want or r.get('transcript'):
-            continue
-        stem = Path(r['file']).stem
-        found = [f for f in [out_dir / f'{stem}.txt', out_dir / f"{r['code']}.txt", *sorted(out_dir.glob(f"{r['code']}_*.txt"))] if f.exists() and f.stat().st_size > 0]
-        if not found:
-            continue
-        body = [ln for ln in read_text(found[0]).splitlines() if ln.strip() and (not ln.startswith('#'))]
-        words = sum((len(re.sub('^\\[\\d+:\\d{2}\\]\\s*', '', ln).split()) for ln in body))
-        r.update({'transcript': f'Transcripts/{found[0].name}', 'has_voice': words >= 15, 'words': words})
-        adopted += 1
-    if adopted:
-        save_refs(F['refs'], data)
-        print(f'{adopted} transcription(s) déjà dans Transcripts/ : reprise(s) telles quelles.')
-    todo = [r for r in refs if want or not r.get('transcript')]
-    if not todo:
-        print('Rien à transcrire.')
-        return
-    model_name = a.model
-    if model_name == 'auto':
-        (total, avail) = W.ram_mb()
-        model_name = 'medium' if (avail or 0) > 2500 else 'small'
-        if (avail or 0) <= 1200:
-            print(f'Peu de mémoire libre ({avail} Mo) : Whisper « small » quand même, parce que ces transcriptions sont copiées mot pour mot. Ferme le navigateur intégré et les applications lourdes ; si la mémoire manque, la commande attend au lieu de passer à « base » (--model base pour le forcer).')
-            a.model = 'small'
-    model = None
-    print(f'{len(todo)} vidéo(s) à transcrire, une à la fois.')
-    allowed = {'fr', 'en'} | {str(m.get('language'))[:2] for m in ws.get('markets') or [] if isinstance(m, dict) and str(m.get('language') or '')[:2] in ('fr', 'en', 'es', 'pt', 'ar')}
-    done = 0
-    for r in todo:
-        src = P['refs_dir'] / r['file']
-        dest = out_dir / f"{Path(r['file']).stem}.txt"
-        if not src.exists():
-            print(f"  {r['code']} : fichier introuvable ({r['file']})")
-            continue
-        if not has_audio(src):
-            dest.write_text(f'# {src.stem} | pas de piste son\n(Vidéo sans voix : modèle plan par plan.)\n', encoding='utf-8')
-            r.update({'transcript': f'Transcripts/{dest.name}', 'has_voice': False})
-            save_refs(F['refs'], data)
-            print(f"  {r['code']} : pas de son")
-            done += 1
-            continue
-        if model is None:
-            try:
-                from faster_whisper import WhisperModel
-            except ImportError:
-                raise WsError('faster-whisper absent : python -m pip install faster-whisper av')
-            for load in (1, 2):
-                try:
-                    model = WhisperModel(model_name, device='cpu', compute_type='int8')
-                    break
-                except Exception as e:
-                    if load == 2:
-                        raise WsError(f"Whisper ne charge pas le modèle {model_name} ({type(e).__name__}) : ferme les applications lourdes (Chrome d'abord) et relance ; les transcriptions finies sont gardées")
-                    print(f'  pas assez de mémoire pour charger Whisper « {model_name} » ({type(e).__name__}) : je réessaie dans une minute', flush=True)
-                    import time
-                    time.sleep(60)
-        lang = r.get('lang') if r.get('lang') in ('fr', 'en', 'es', 'pt', 'ar') else None
-        if not lang:
-            lang = guess_language(model, src, allowed)
-            print(f"  {r['code']} : langue inconnue, choisie parmi {'/'.join(sorted(allowed))} : {lang}")
-        lines = None
-        for attempt in (1, 2):
-            try:
-                (segs, info) = model.transcribe(str(src), beam_size=1 if a.fast else 5, vad_filter=True, language=lang, condition_on_previous_text=False)
-                lines = [f'# {src.stem} | lang={info.language} | model={model_name} | dur={info.duration:.0f}s']
-                for s in segs:
-                    (mm, ss) = divmod(int(s.start), 60)
-                    lines.append(f'[{mm}:{ss:02d}] {s.text.strip()}')
-                break
-            except (MemoryError, RuntimeError) as e:
-                import gc
-                del model
-                gc.collect()
-                lighter = model_name if a.model != 'auto' else {'medium': 'small', 'small': 'base'}.get(model_name, model_name)
-                if lighter == model_name:
-                    import time
-                    time.sleep(60)
-                if attempt == 2:
-                    model = None
-                    break
-                print(f"  {r['code']} : mémoire saturée ({type(e).__name__}) : je recharge Whisper « {lighter} » et je réessaie", flush=True)
-                try:
-                    model_name = lighter
-                    model = WhisperModel(model_name, device='cpu', compute_type='int8')
-                except Exception:
-                    model = None
-                    break
-            except Exception as e:
-                samples = ffmpeg_audio(src) if attempt == 1 else None
-                if samples is None:
-                    print(f"  {r['code']} : échec ({type(e).__name__}) ; relance plus tard, les autres continuent")
-                    break
-                print(f"  {r['code']} : le lecteur vidéo de Python a échoué ({type(e).__name__}) : je lis le son avec ffmpeg et je réessaie", flush=True)
-                src_for_whisper = samples
-                try:
-                    (segs, info) = model.transcribe(src_for_whisper, beam_size=1 if a.fast else 5, vad_filter=True, language=lang, condition_on_previous_text=False)
-                    lines = [f'# {src.stem} | lang={info.language} | model={model_name} | dur={info.duration:.0f}s']
-                    for s_ in segs:
-                        (mm, ss) = divmod(int(s_.start), 60)
-                        lines.append(f'[{mm}:{ss:02d}] {s_.text.strip()}')
-                except Exception as e2:
-                    print(f"  {r['code']} : échec ({type(e2).__name__}) ; relance plus tard, les autres continuent")
-                break
-        if model is None:
-            rest = [x['code'] for x in todo[todo.index(r):]]
-            if not os.environ.get('CSOS_TRANSCRIBE_CHILD') and P.get('root'):
-                print(f'  la mémoire ne suffit plus pour ce processus : les {len(rest)} vidéo(s) restante(s) passent une par une, chacune dans son propre processus, en modèle « base »', flush=True)
-                env = dict(os.environ, CSOS_TRANSCRIBE_CHILD='1')
-                for code in rest:
-                    subprocess.run([sys.executable, str(Path(__file__).resolve()), 'transcribe', str(P['root']), code, '--model', 'base'], env=env)
-                data = load_list(F['refs'], 'references')
-                done += sum((1 for x in data['references'] if isinstance(x, dict) and x.get('code') in rest and x.get('transcript')))
-                break
-            left = len(todo) - done - 1
-            print(f"  {r['code']} : la mémoire de cet ordinateur ne suffit plus. Arrêt : {done} transcrite(s), {left} restante(s). Ferme le navigateur et les applications lourdes, puis relance research.py transcribe (les finies sont gardées).")
-            break
-        if lines is None:
-            continue
-        dest.write_text('\n'.join(lines), encoding='utf-8')
-        words = sum((len(l.split()) for l in lines[1:]))
-        r.update({'transcript': f'Transcripts/{dest.name}', 'has_voice': words >= 15, 'words': words, 'transcript_model': model_name})
-        save_refs(F['refs'], data)
-        done += 1
-        print(f"  {r['code']} : {len(lines) - 1} segments, {words} mots", flush=True)
-    journal(P, f'Transcriptions : {done} vidéo(s)')
-    refresh(P, ws, state)
-
-def open_video(path):
-    import av
-    try:
-        return av.open(str(path))
-    except Exception as e:
-        raise WsError(f"{Path(path).name} ne s'ouvre pas comme une vidéo ({type(e).__name__}) : retélécharge-la (research.py download <dossier> <CODE>)")
-
-def video_frames(path, n):
-    """n frames spread over the video, each with its time; fewer when the video is shorter than n half-seconds."""
-    c = open_video(path)
-    try:
-        st = c.streams.video[0]
-        dur = float(st.duration * st.time_base) if st.duration else float(c.duration or 0) / 1000000.0
-        n = max(1, min(n, int(dur * 2) or 1))
-        out = []
-        for i in range(n):
-            t = dur * (i + 0.5) / n
-            c.seek(int(t / st.time_base), stream=st, any_frame=False, backward=True)
-            for fr in c.decode(st):
-                out.append((t, fr.to_image()))
-                break
-        return (out, dur)
-    finally:
-        c.close()
-
-def stamp_of(t):
-    (mm, ss) = divmod(t, 60)
-    whole = int(ss)
-    tenth = int(round((ss - whole) * 10)) % 10
-    return f'{int(mm)}m{whole:02d}s' + (f'{tenth}' if tenth else '')
-
-def cmd_sheet(a):
-    (P, ws, state) = open_ws(a.folder)
-    from PIL import Image, ImageDraw
-    data = load_list(files(P)['refs'], 'references')
-    refs = [r for r in data['references'] if r.get('file') and (a.platform in (None, 'all') or r.get('platform') == a.platform)]
-    if getattr(a, 'images', False):
-        refs = [r for r in refs if not is_video(r['file'])]
-    out = P['refs_dir'] / '_sheets'
-    out.mkdir(parents=True, exist_ok=True)
-    (per, W_, H_) = (6, 180, 320)
-    made = []
-    if getattr(a, 'by_author', False):
-        groups = {}
-        for r in refs:
-            groups.setdefault(str(r.get('author') or '?'), []).append(r)
-        batches = [(slug(au, 30), rs[k:k + 6]) for (au, rs) in sorted(groups.items(), key=lambda x: -len(x[1])) for k in range(0, len(rs), 6)]
-    else:
-        batches = [(f"{a.platform or 'all'}_{i // 6 + 1:02d}", refs[i:i + 6]) for i in range(0, len(refs), 6)]
-    for (i, (name, batch)) in enumerate(batches):
-        sheet = Image.new('RGB', (per * W_, len(batch) * (H_ + 22)), 'white')
-        d = ImageDraw.Draw(sheet)
-        for (row, r) in enumerate(batch):
-            y = row * (H_ + 22)
-            d.text((4, y + 4), f"{r['code']}  {str(r.get('author') or '')[:24]}  {short_metric(r)}", fill='red')
-            src = P['refs_dir'] / r['file']
-            try:
-                if not is_video(src):
-                    ims = [Image.open(P['refs_dir'] / f) for f in (r.get('files') or [r['file']])[:per]]
-                else:
-                    ims = [im for (_, im) in video_frames(src, per)[0]]
-            except Exception:
-                d.text((4, y + 40), 'illisible : retélécharge-la', fill='black')
-                continue
-            for (k, im) in enumerate(ims[:per]):
-                im = im.convert('RGB')
-                im.thumbnail((W_, H_))
-                sheet.paste(im, (k * W_, y + 22))
-        path = out / f"sheet_{name}{('_' + str(i + 1) if getattr(a, 'by_author', False) else '')}.png"
-        sheet.save(path)
-        made.append(path)
-    print(f'{len(made)} planche(s) dans References/_sheets/ ({len(refs)} références) :')
-    for p in made:
-        print(f'  {p}')
-    print('Regarde-les toutes avant de garder une référence : produit hors sujet, téléchargement cassé, mauvais pays.')
-
-def cmd_frames(a):
-    codes = [a.code] + [s for s in a.secs if re.fullmatch('[A-Za-z]{1,4}\\d{1,4}', str(s))]
-    secs = [s for s in a.secs if s not in codes]
-    if len(codes) > 1 and secs:
-        raise WsError('des secondes précises vont avec un seul code : frames <dossier> AL01 3 7.5')
-    for code in codes:
-        _frames_one(a, code, secs)
-
-def _frames_one(a, code, secs):
-    (P, ws, state) = open_ws(a.folder)
-    F = files(P)
-    data = load_list(F['refs'], 'references')
-    r = ref_by_code(data['references'], code)
-    if not r or not r.get('file'):
-        raise WsError(f'{code} : pas de fichier téléchargé')
-    src = P['refs_dir'] / r['file']
-    if not is_video(src):
-        print(f"{r['code']} est une image : elle sert telle quelle de visuel ({r['file']}), pas d'images clés à extraire")
-        return
-    out = P['refs_dir'] / 'Frames'
-    out.mkdir(parents=True, exist_ok=True)
-    notes = []
-    if secs:
-        c = open_video(src)
-        try:
-            st = c.streams.video[0]
-            dur = float(st.duration * st.time_base) if st.duration else float(c.duration or 0) / 1000000.0
-            ims = []
-            for t in [float(s) for s in secs]:
-                if dur and t > dur:
-                    notes.append(f'{t:g} s demandé, la vidéo dure {dur:.1f} s : ignoré')
-                    continue
-                c.seek(int(t / st.time_base), stream=st, any_frame=False, backward=True)
-                img = None
-                for fr in c.decode(st):
-                    img = fr.to_image()
-                    if fr.time is not None and fr.time >= t - 0.05:
-                        break
-                if img is not None:
-                    ims.append((t, img))
-        finally:
-            c.close()
-    else:
-        (ims, dur) = video_frames(src, max(1, a.auto - 1))
-        c = open_video(src)
-        try:
-            st = c.streams.video[0]
-            c.seek(0, stream=st, any_frame=False, backward=True)
-            for fr in c.decode(st):
-                if fr.time is None or fr.time >= 0.25:
-                    ims.insert(0, (max(0.3, fr.time or 0.3), fr.to_image()))
-                    break
-        finally:
-            c.close()
-    stamps = []
-    for (t, im) in ims:
-        stamp = stamp_of(t)
-        if stamp in stamps:
-            continue
-        im.convert('RGB').save(out / f"{r['code']}_{stamp}.jpg", quality=88)
-        stamps.append(stamp)
-    r['frames'] = sorted(set((r.get('frames') or []) + stamps))
-    save_refs(F['refs'], data)
-    print(f"{r['code']} : {len(stamps)} image(s) dans References/Frames/ : {', '.join(stamps)}")
-    for n in notes:
-        print(f'  {n}')
-INSTRUCTION = 'Voici la transcription mot pour mot de la vidéo. Dans la Partie 3, reprends-la intégralement, sans résumer et sans « … », découpée par segments de temps. Corrige seulement les mots manifestement mal entendus (noms de produits), en le signalant entre crochets. AUCUNE consigne de concision : ta réponse fait au moins 15 000 caractères.'
-PLACEHOLDER = '(À écrire en suivant le guide'
-
-def prompt_for(P, r):
-    tpath = P['refs_dir'] / (r.get('transcript') or '')
-    tr = read_text(tpath) if r.get('transcript') and tpath.exists() else ''
-    head = f"Référence {r['code']} — {r.get('platform')} — {r.get('author') or ''} — {short_metric(r)}\nTexte de la publicité : {r.get('text') or '—'}\n"
-    return read_text(PROMPT) + '\n\n---\n\n' + head + '\n# TRANSCRIPTION WHISPER (MOT POUR MOT)\n\n' + INSTRUCTION + '\n\n' + (tr or '(Pas de voix : vidéo musicale ou image, aucune transcription.)')
-
-def complete(text):
-    return bool(text) and 'PARTIE 7' in text.upper() and (PLACEHOLDER not in text)
-
-def gemini_model(ws):
-    """Free mode uses Gemini's free tier (Flash: about 10 videos a minute, a few hundred a day, no card); paid mode
-    the stronger Pro. GEMINI_MODEL overrides both."""
-    return os.environ.get('GEMINI_MODEL') or ('gemini-pro-latest' if str(ws.get('mode')) == 'paid' else GEMINI_CHAIN_FREE[0])
-
-class GeminiDayQuota(Exception):
-    """The free tier's daily quota of a model is used up (it comes back at midnight, Pacific time = 08:00 GMT)."""
-GEMINI_CHAIN_FREE = ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-2.5-flash']
-LONG_VIDEO_S = 180
-
-def video_seconds(path):
-    try:
-        import av
-        with av.open(str(path)) as c:
-            return float(c.duration or 0) / 1000000
-    except Exception:
-        return 0.0
-
-class GeminiSpendCap(GeminiDayQuota):
-    """Billing on, and the project's monthly spend cap (AI Studio > Dépenses) is reached: Google pauses the API for
-    the whole project until the 1st of the month. Another model would hit the same cap, so the run stops asking."""
-
-def quota_kind(e):
-    t = str(e)
-    if re.search('spend(ing)?[ _-]?(cap|limit)|monthly (spend|usage) (cap|limit)|billing account.*(cap|limit|paused)', t, re.I):
-        return 'cap'
-    if '429' not in t and 'RESOURCE_EXHAUSTED' not in t:
-        return None
-    return 'day' if re.search('PerDay|per day|daily', t, re.I) else 'minute'
-
-def gemini_analyse(path, prompt, model=None):
-    key = os.environ.get('GEMINI_API_KEY') or W.env_state('GEMINI_API_KEY')[1]
-    if not key:
-        raise WsError('GEMINI_API_KEY absente : analyse par images clés (--engine frames) ou par AI Studio (--engine pack)')
-    try:
-        from google import genai
-    except ImportError:
-        raise WsError('google-genai absent : python -m pip install google-genai')
-    client = genai.Client(api_key=key)
-    f = client.files.upload(file=str(path))
-    try:
-        for _ in range(60):
-            st = getattr(getattr(f, 'state', None), 'name', str(getattr(f, 'state', '')))
-            if st != 'PROCESSING':
-                break
-            time.sleep(5)
-            f = client.files.get(name=f.name)
-        if 'FAILED' in str(getattr(getattr(f, 'state', None), 'name', getattr(f, 'state', ''))):
-            raise RuntimeError("Gemini n'a pas pu lire le fichier")
-        cfg = None
-        try:
-            if video_seconds(path) > LONG_VIDEO_S:
-                from google.genai import types as _t
-                cfg = _t.GenerateContentConfig(media_resolution=_t.MediaResolution.MEDIA_RESOLUTION_LOW)
-        except Exception:
-            cfg = None
-        for attempt in (1, 2, 3):
-            try:
-                resp = client.models.generate_content(model=model or GEMINI_MODEL, contents=[f, prompt], config=cfg)
-                return resp.text or ''
-            except Exception as e:
-                k = quota_kind(e)
-                if k == 'cap':
-                    raise GeminiSpendCap(str(e)[:200])
-                if k == 'day':
-                    raise GeminiDayQuota(str(e)[:200])
-                low = str(e).lower()
-                if '404' in low or 'not_found' in low or 'no longer available' in low:
-                    raise GeminiDayQuota('modèle indisponible : ' + str(e)[:150])
-                if ('503' in low or 'unavailable' in low or 'high demand' in low) and attempt < 3:
-                    print('    Gemini surchargé, 30 s de pause…')
-                    time.sleep(30)
-                    continue
-                if '503' in low or 'unavailable' in low:
-                    raise GeminiDayQuota('modèle surchargé : ' + str(e)[:150])
-                if k == 'minute' and attempt < 3:
-                    print('    quota de la minute atteint, une minute de pause…')
-                    time.sleep(62)
-                    continue
-                raise
-    finally:
-        try:
-            client.files.delete(name=f.name)
-        except Exception:
-            pass
-
-def cmd_analyse(a):
-    (P, ws, state) = open_ws(a.folder)
-    F = files(P)
-    data = load_list(F['refs'], 'references')
-    engine = a.engine or {'gemini': 'gemini', 'frames': 'frames'}.get((state.get('effective_engines') or {}).get('analyse'), 'frames')
-    out = P['refs_dir'] / 'Analyses'
-    out.mkdir(parents=True, exist_ok=True)
-    if a.answer and len(a.codes) != 1:
-        raise WsError('--answer va avec une seule référence : research.py analyse <dossier> <CODE> --answer réponse.md')
-    codes = list(a.codes)
-    if a.all:
-        codes += [r['code'] for r in data['references'] if isinstance(r, dict) and r.get('file') and (not r.get('analysis_complete')) and (r.get('code') not in codes)]
-        if engine == 'frames' and len(codes) > 20:
-            print(f'  {len(codes)} références sans Gemini : chacune se lit avec Claude (images clés). Une clé Gemini gratuite les fait toutes sans entamer ton usage Claude (ws.py doctor dit comment).')
-    if not codes:
-        raise WsError('donne les codes à analyser, ou --all')
-    model = gemini_model(ws)
-    chain = [model] + [m for m in GEMINI_CHAIN_FREE if m != model] if not os.environ.get('GEMINI_MODEL') else [model]
-    waiting = []
-    capped = False
-    for code in codes:
-        r = ref_by_code(data['references'], code)
-        if not r:
-            print(f'  {code} : pas dans library/references.yaml')
-            continue
-        if not r.get('file') and (not a.answer):
-            print(f"  {code} : pas de fichier. Regarde-la en ligne ({r.get('url') or 'lien absent'}), écris ce que tu vois avec le même plan en 7 parties, puis : research.py analyse <dossier> {code} --answer vu.md")
-            continue
-        src = P['refs_dir'] / r['file'] if r.get('file') else None
-        dest = out / f"{r['code']}_ANALYSE.md"
-        if a.answer:
-            ans = Path(a.answer).expanduser()
-            if not ans.exists() and (P['root'] / a.answer).exists():
-                ans = P['root'] / a.answer
-            text = read_text(ans)
-            dest.write_text(f"<!-- {r['code']} | réponse enregistrée | {today()} -->\n\n{text}", encoding='utf-8')
-            r.update({'analysis': f'Analyses/{dest.name}', 'analysis_engine': r.get('analysis_engine') or 'aistudio', 'skeleton': True, 'analysis_complete': complete(text)})
-            if not r.get('file'):
-                r.update({'status': 'seen_online', 'analysis_engine': 'online'})
-            print(f'  {code} : réponse enregistrée ({len(text)} signes)' + ('' if complete(text) else ' — PARTIE 7 absente : réponse coupée ?'))
-        elif engine == 'gemini':
-            if not chain:
-                waiting.append(code)
-                continue
-            try:
-                while True:
-                    try:
-                        model = chain[0]
-                        text = gemini_analyse(src, prompt_for(P, r), model)
-                        break
-                    except GeminiSpendCap:
-                        print("    plafond de dépenses du mois atteint (AI Studio > Dépenses) : Google met l'API en pause jusqu'au 1er du mois, je n'interroge plus Gemini")
-                        chain.clear()
-                        capped = True
-                        raise
-                    except GeminiDayQuota:
-                        print(f'    {chain[0]} : quota du jour épuisé, modèle indisponible ou surchargé' + (f', je passe à {chain[1]}' if len(chain) > 1 else ''))
-                        chain.pop(0)
-                        if not chain:
-                            raise
-            except GeminiDayQuota:
-                waiting.append(code)
-                continue
-            except WsError:
-                raise
-            except Exception as e:
-                print(f'  {code} : Gemini refuse ({type(e).__name__} : {str(e)[:120]}) ; passe aux images clés : --engine frames')
-                continue
-            if not text.strip():
-                print(f"  {code} : Gemini a répondu vide ; rien n'est enregistré, relance ou passe aux images clés")
-                continue
-            dest.write_text(f"<!-- {r['code']} | {model} | API | {today()} -->\n\n{text}", encoding='utf-8')
-            r.update({'analysis': f'Analyses/{dest.name}', 'analysis_engine': 'gemini', 'skeleton': True, 'analysis_complete': complete(text)})
-            print(f'  {code} : {len(text)} signes' + ('' if complete(text) else ' — PARTIE 7 absente : réponse coupée, relance'))
-        elif engine == 'pack':
-            pack = P['refs_dir'] / '_gemini'
-            pack.mkdir(exist_ok=True)
-            shutil.copy(src, pack / src.name)
-            (pack / f"{r['code']}_PROMPT.txt").write_text(prompt_for(P, r), encoding='utf-8')
-            r.update({'analysis_engine': 'aistudio', 'skeleton': True})
-            print(f"  {code} : _gemini/{src.name} + {r['code']}_PROMPT.txt prêts pour AI Studio ; enregistre la réponse avec research.py analyse <dossier> {r['code']} --answer <fichier>")
-        else:
-            frames_dir = P['refs_dir'] / 'Frames'
-            frames_dir.mkdir(exist_ok=True)
-            stamps = []
-            if is_video(src):
-                (ims, _) = video_frames(src, 8)
-                for (t, im) in ims:
-                    stamp = stamp_of(t)
-                    if stamp not in stamps:
-                        im.convert('RGB').save(frames_dir / f"{r['code']}_{stamp}.jpg", quality=88)
-                        stamps.append(stamp)
-            if not dest.exists():
-                pics = ', '.join((f"Frames/{r['code']}_{s}.jpg" for s in stamps)) or r['file']
-                dest.write_text(f"<!-- {r['code']} | images clés lues par Claude | {today()} -->\n\n# {r['code']} — analyse plan par plan\n\nImages : {pics}\n\n{PLACEHOLDER} ci-dessous, en regardant chaque image et en lisant la transcription ; remplace tout ce bloc.)\n\n" + prompt_for(P, r), encoding='utf-8')
-            r.update({'analysis': f'Analyses/{dest.name}', 'analysis_engine': 'frames', 'skeleton': True, 'analysis_complete': complete(read_text(dest)), 'frames': sorted(set((r.get('frames') or []) + stamps))})
-            print(f"  {code} : {len(stamps)} image(s) clé(s) + le guide dans Analyses/{dest.name} ; regarde les images et écris l'analyse à la place du guide")
-        save_refs(F['refs'], data)
-    if waiting and capped:
-        print(f"\n{len(waiting)} référence(s) attendent : le plafond de dépenses mensuel de ton projet Gemini est atteint ({', '.join(waiting[:12])}{('…' if len(waiting) > 12 else '')}). Google reprend le 1er du mois. Pour continuer avant : relève le plafond dans AI Studio (Dépenses, « Plafond de dépenses mensuel »), ou « --engine frames » (Claude lit les images clés), ou « --engine pack » (AI Studio dans le navigateur).")
-        journal(P, f"Analyses Gemini : {len(waiting)} en attente, plafond de dépenses atteint ({', '.join(waiting)})")
-    elif waiting:
-        print(f"\n{len(waiting)} référence(s) attendent : le quota gratuit du jour est épuisé sur tous les modèles ({', '.join(waiting[:12])}{('…' if len(waiting) > 12 else '')}). Il revient à minuit heure du Pacifique (08:00 GMT, 09:00 au Bénin) : relance « research.py analyse <dossier> --all » demain, il reprend où il s'est arrêté. Si c'est urgent : « --engine frames » sur celles qui comptent (Claude lit les images clés), ou « --engine pack » pour AI Studio dans le navigateur, qui a son propre quota.")
-        journal(P, f"Analyses Gemini : {len(waiting)} en attente du quota de demain ({', '.join(waiting)})")
-    journal(P, f"Analyses ({('réponse' if a.answer else engine)}) : {', '.join((c.upper() for c in a.codes))}")
-    refresh(P, ws, state)
-
-def intent_of(comment):
-    t = fold(comment)
-    return any((re.search(p, t) for p in INTENT_PHRASES))
-
-def objections_of(comment, table=None):
-    t = fold(comment)
-    return [k for (k, p) in (table or OBJECTIONS).items() if re.search(p, t)]
-
-def cmd_intent(a):
-    (P, ws, state) = open_ws(a.folder)
-    F = files(P)
-    src = Path(a.file).expanduser()
-    if not src.exists() and (P['root'] / a.file).exists():
-        src = P['root'] / a.file
-    if not src.exists():
-        raise WsError(f'fichier introuvable : {a.file}')
-    raw = json.loads(src.read_text(encoding='utf-8-sig'))
-    raw = raw.get('result', raw) if isinstance(raw, dict) else raw
-    items = raw.get('videos', raw) if isinstance(raw, dict) else {}
-    if not isinstance(items, dict) or not items or (not all((isinstance(v, dict) for v in items.values()))):
-        raise WsError(f'{src.name} : il faut le résultat de browser/tiktok_comments.js ou fb_comments.js ({{{{id: {{{{read, comments: [...]}}}}}}}})')
-    refs = load_list(F['refs'], 'references')
-    cands = load_list(F['cands'], 'candidates')
-    table = K.objections(ws)
-    (voice, totals, done) = ([], {k: 0 for k in table}, 0)
-    for (vid, v) in items.items():
-        comments = [str(c) for c in v.get('comments') or []]
-        read = int(v.get('read') or len(comments))
-        buying = [c for c in comments if intent_of(c)]
-        obj = {k: 0 for k in table}
-        for c in comments:
-            for k in objections_of(c, table):
-                obj[k] += 1
-                totals[k] += 1
-        it = {'buying': len(buying), 'read': read, 'objections': {k: n for (k, n) in obj.items() if n}}
-        for lst in (refs['references'], cands['candidates']):
-            for x in lst:
-                if str(x.get('id')) == str(vid) or str(x.get('code') or '') == str(vid):
-                    x['intent'] = it
-        code = next((r['code'] for r in refs['references'] if str(r.get('id')) == str(vid) or r.get('code') == vid), vid)
-        voice += [f"- [{code}]{(' 🛒' if intent_of(c) else '')}{(' (' + ', '.join(objections_of(c, table)) + ')' if objections_of(c, table) else '')} {c}" for c in comments]
-        done += 1
-    save_refs(F['refs'], refs)
-    dump_yaml(F['cands'], cands)
-    F['voice'].mkdir(parents=True, exist_ok=True)
-    stamp = dt.datetime.now().strftime('%Y-%m-%d-%H%M%S')
-    source = str((raw.get('source') if isinstance(raw, dict) else '') or next((v.get('source') for v in items.values() if v.get('source')), '') or 'tiktok').lower()
-    source = source if source in ('facebook', 'instagram', 'tiktok') else 'tiktok'
-    vf = F['voice'] / f'commentaires-{source}-{stamp}.md'
-    head = f"# Commentaires {(source.capitalize() if source != 'tiktok' else 'TikTok')} lus le {today()}\n\nTels quels : les mots des acheteurs, leurs questions, leurs objections. 🛒 = demande à acheter (prix, livraison, lien). Entre parenthèses : le type d'objection.\n\nObjections comptées : " + ', '.join((f'{k} {n}' for (k, n) in totals.items() if n)) + '\n\n'
-    vf.write_text(head + '\n'.join(voice) + '\n', encoding='utf-8')
-    journal(P, f"Intention d'achat lue sur {done} vidéo(s) ; commentaires dans library/voice/{vf.name}")
-    refresh(P, ws, state)
-    print(f"{done} vidéo(s) : intention d'achat notée ; {len(voice)} commentaires dans library/voice/{vf.name}")
-    print('Objections : ' + (', '.join((f'{k} {n}' for (k, n) in sorted(totals.items(), key=lambda x: -x[1]) if n)) or 'aucune repérée'))
-
-def build_parser():
-    ap = W.FrParser(prog='research.py', description='La recherche : trouver, choisir, télécharger, transcrire, lire.')
-    sub = ap.add_subparsers(dest='cmd', required=True, parser_class=W.FrParser)
-    p = sub.add_parser('plan')
-    p.add_argument('folder')
-    p.add_argument('--terms')
-    p.add_argument('--countries')
-    p.add_argument('--refs', type=int, help='nombre de références à garder (40 en mode gratuit, 60 sinon)')
-    p.add_argument('--must', help='mots dont une pub pertinente porte au moins un, séparés par des virgules')
-    p.add_argument('--not', dest='not', help='mots qui mettent une pub de côté (« école, banque »)')
-    p.add_argument('--page', help="l'identifiant d'une page d'annonceur à lire en entier (view_all_page_id)")
-    p.add_argument('--name', help="le nom de l'annonceur, pour --page")
-    p.add_argument('--format', action='store_true', help='ajouter les mots du format (atelier gratuit, 3 soirées, défi…)')
-    p.add_argument('--sellers', help='suivre des vendeurs : noms ou domaines, tous pays (la boule de neige)')
-    p = sub.add_parser('discover')
-    p.add_argument('folder')
-    p.add_argument('--platform', choices=('adlib', 'tiktok', 'instagram'))
-    p.add_argument('--limit', type=int, default=40)
-    p.add_argument('--dry-run', dest='dry_run', action='store_true')
-    p.add_argument('--yes', action='store_true', help='accepter le coût estimé et lancer')
-    p.add_argument('--all', action='store_true', help='refaire aussi les recherches déjà faites')
-    p = sub.add_parser('paste')
-    p.add_argument('folder')
-    p.add_argument('--term')
-    p.add_argument('--country')
-    p.add_argument('--lang')
-    p.add_argument('--save', help='seulement enregistrer la capture à cet endroit (ex. library/competitors/kinova.json)')
-    p.add_argument('--again', action='store_true', help="importer même si c'est la même capture que la précédente")
-    p = sub.add_parser('import')
-    p.add_argument('folder')
-    p.add_argument('file')
-    p.add_argument('--term')
-    p.add_argument('--country')
-    p.add_argument('--lang')
-    p = sub.add_parser('rank')
-    p.add_argument('folder')
-    p.add_argument('--platform', choices=tuple(PLATFORMS))
-    p.add_argument('--top', type=int, default=20)
-    p.add_argument('--landing', choices=('quiz',), help="seulement les pubs dont la page d'arrivée est un quiz")
-    p = sub.add_parser('pick')
-    p.add_argument('folder')
-    p.add_argument('ids', nargs='*')
-    p.add_argument('--why')
-    p.add_argument('--auto', action='store_true')
-    p.add_argument('--adlib', type=int)
-    p.add_argument('--tiktok', type=int)
-    p.add_argument('--instagram', type=int)
-    p.add_argument('--id', nargs='+', help="l'id d'une pub vue en direct dans la Bibliothèque (téléchargée par yt-dlp)")
-    p.add_argument('--author', help="avec --id : l'annonceur")
-    p.add_argument('--text', help='avec --id : le texte de la pub')
-    p.add_argument('--country', help='avec --id : le pays (code)')
-    p.add_argument('--started', help='avec --id : la date de début de diffusion (AAAA-MM-JJ)')
-    p = sub.add_parser('voice')
-    p.add_argument('folder')
-    p.add_argument('file', help='commentaires : JSON (YouTube…), .txt ou .md')
-    p.add_argument('--source', help="d'où viennent ces mots (« youtube durer au lit ») : va dans le nom du fichier")
-    p = sub.add_parser('reject')
-    p.add_argument('folder')
-    p.add_argument('ids', nargs='+')
-    p.add_argument('--reason', required=True)
-    p = sub.add_parser('download')
-    p.add_argument('folder')
-    p.add_argument('codes', nargs='*')
-    p = sub.add_parser('transcribe')
-    p.add_argument('folder')
-    p.add_argument('codes', nargs='*')
-    p.add_argument('--model', default='auto', choices=('base', 'small', 'medium', 'auto'))
-    p.add_argument('--fast', action='store_true')
-    p.add_argument('--redo', action='store_true', help='refaire les transcriptions déjà faites')
-    p = sub.add_parser('sheet')
-    p.add_argument('folder')
-    p.add_argument('--platform', choices=tuple(PLATFORMS) + ('all',))
-    p.add_argument('--by-author', dest='by_author', action='store_true', help='une planche par annonceur')
-    p.add_argument('--images', action='store_true', help='seulement les images')
-    p = sub.add_parser('frames')
-    p.add_argument('folder')
-    p.add_argument('code')
-    p.add_argument('secs', nargs='*', help="des secondes (un seul code), ou d'autres codes : frames <dossier> AL01 AL09")
-    p.add_argument('--auto', type=int, default=6)
-    p = sub.add_parser('analyse')
-    p.add_argument('folder')
-    p.add_argument('codes', nargs='*')
-    p.add_argument('--all', action='store_true', help='toutes les références téléchargées pas encore analysées')
-    p.add_argument('--engine', choices=('gemini', 'frames', 'pack'))
-    p.add_argument('--answer', help='enregistrer une réponse écrite ailleurs (AI Studio) pour cette référence')
-    p = sub.add_parser('intent')
-    p.add_argument('folder')
-    p.add_argument('file')
-    p = sub.add_parser('check')
-    p.add_argument('folder')
-    p.add_argument('id', nargs='?')
-    p.add_argument('status', nargs='?', choices=('ok', 'warn', 'fail', 'todo', 'na'))
-    p.add_argument('--evidence', default='')
-    for name in ('hooks', 'status', 'log'):
-        p = sub.add_parser(name)
-        p.add_argument('folder')
-    p = sub.add_parser('report')
-    p.add_argument('folder')
-    p.add_argument('--done', action='store_true')
-    return ap
-
-def _forward(a):
-    """Commands not listed as local run on the licence server (see csos_client.py)."""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'creative-strategist' / 'scripts'))
-    import csos_client
-    sys.exit(csos_client.forward(__file__, sys.argv[1:]))
-
-def main(argv=None):
-    a = build_parser().parse_args(argv)
-    cmds = {'discover': cmd_discover, 'paste': cmd_paste, 'import': cmd_import, 'download': cmd_download, 'transcribe': cmd_transcribe, 'sheet': cmd_sheet, 'frames': cmd_frames, 'analyse': cmd_analyse, 'voice': cmd_voice}
-    try:
-        cmds.get(a.cmd, _forward)(a)
-    except WsError as e:
-        print(f'ERREUR : {e}', file=sys.stderr)
-        sys.exit(2)
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        print(f'ERREUR : fichier JSON illisible ({type(e).__name__}) : refais la capture et enregistre son résultat tel quel.', file=sys.stderr)
-        sys.exit(2)
-    except PermissionError as e:
-        print(f"ERREUR : fichier verrouillé ({Path(str(e.filename or '')).name or 'inconnu'}) : ferme-le et relance.", file=sys.stderr)
-        sys.exit(2)
-    except Exception as e:
-        print(f'ERREUR inattendue ({type(e).__name__} : {e}).', file=sys.stderr)
-        if os.environ.get('WS_DEBUG'):
-            raise
-        sys.exit(3)
-if __name__ == '__main__':
-    main()
+# Creative Strategy OS, sous licence. Usage personnel, non transférable.
+import base64 as _b, zlib as _z
+_s = (
+    'c-qaq*>WV;l_2<@U*QD}>F#8NW62~%1qEg&Gm#|3T+jegEGaT7%n{)Mc*4Uy(ibcQqD@b2-EVDeV>UK64^vM)l~u28HrA#$;ZO7h'
+    '^9gg7yZRCUl9ak>QX<^_?)TiYpL65+BFjrB%#RmgUPKRKex8P9RL1kj2@7Xh%D3-|ES0~rLjKBCt>UCA<3v4GM~gh0M1?9@T&kbg'
+    'xcptE@g$o@&}XP#<w+7B1yP=7dF`DwPVp{}-d9mkKA7d%+*yR>3A}Vfkv({P@cqvIj<Zd_z43S!C((H9L$xAH&LYppMx(TRaPVgL'
+    '5X)h4@lO14)*W|}M`0PCMg5}8VSSF{qIB_nG0EdaS-214nUiLv<8d?a<-7<Mm#!Z~7f`nF{J{eU{#)d6T6!~gXMca^&Au~mlE^7e'
+    '<0NrfdT^#$Tsk-ZTIP`xr$rei$;}7n=AWI(&3`Z9*EDh_MIUAoh56*f@xro<(rE>)UePd?e&F^Tobfg+e^8WDSX7_JfzL3q(%bSM'
+    ';BQ>G0Q!jX(%a}cFb1B9@5|*rFAyMpl#i!zI;A&1@XEty@#V*22e+>0WQ!;rpBFtR$-?RQGMpzpXIjk{;^(`p%F_^j<k1Y~aME+i'
+    'Y#LtTGZZhQi}JzV{_B@}hxVr6+LqCLk-#Dqv<D%ya#=)UfVlah4CYh!!QP7}htFT{zdV4tS8g~3m~aP<=RSD>3*tVRzKD<VFo*4d'
+    'r!qb*vs3zfc!-}5<I_WUf!}D=kMnR&pLf5*&%5d!mblESvO0?B`yZ(KAF}EY-{99t62p+`<5TMTDZlWS51#LjpT2(c>TrK|hevtv'
+    'iVEz~zc2CMZ+}O_p<Z87^>3f!zu!^GS36Yl8U0ITzI#ID>CH=e^L(FbamnxLUn=vGOHw<}{)qp6Ph;Qzk;?NJsIO-<h977=FZbQ$'
+    'gPm8kalbjBzQ4tP-~2!$<IzxmKTzL)r2gK}`$OvQ$s1Zr`npTw*rW0<Xv7CJ+wZ8?Kk~mnLf=oG9=_hU_tXs+@$B+H%)&`@lx3&='
+    'a9Z@?P=<>rcg@X(t;i;)=UIMQ{0Dw%7Blx*w5VRGa?t<Y?(;v4_x5+6?u_?#_Q#tW8ynVWz6icDJAD*v)EeIke!YC~-OkJ1SG(hv'
+    'ub=I_fa)0>#q=!Bvotu4O3yVv<KT{?d7Q@mt>BA3fVk^F*nM@l^XhQC_x=8p1KNb4`}Qp$-1q|iU=8?FhIu>_zbD!J2*3`0d5`}A'
+    'v4;0}fJdmf#xq!47tuV7)2O(fXK`^ogMWNqRGm#`A^f?<R@ATKbjBU6!Jn+c=CaiBAH&~8RF&6@3Yu9!(|HI@4g1arzPyW^YgsCB'
+    'AJgA(auStMejT1=aeiIqS#<_aFx+{V0<QAcco5tLAbA+6!=-$DlY|a@D`Ox4*MLXo;c-~R>GfHL2vdHMGdatu!b#$@Jo-sY10S&6'
+    'pRQq;S$Yj!bGzYnSY1cyby4NMp6I(s^of1J{|lJQSyWw!*50{M>X^@w16@vW325{w)REJs>B`ABrVA7z0)$u$Z$3n$=yCB_j{(af'
+    '4unQjHE5O_gf6U>aqOZ=7;(Z7fJ3WN^C^kbQw=w1HIMR4d^$e~%OYGX#ABQuWpaAcxvn#fi$#{k&<i{SpS^wiSOXr9QI|c*&YgKR'
+    'Ini$bZYPm`JU@ZS(*(oxdYbu8j1O=yu8*qA>nxu}a#N`5%(-Onm`1Rluo}flyf6xg#Vn(#@y<C9c@eWTx{k~1@&o|3%pB;!w})CE'
+    '2lamqqoH!62d}^V-Okg)-Pf=182%9G$Ds>nby`hIDD+?&&72~sjy)iT>Gsx!U<L}PV=zELn&tB_iGPYb_to<s5RD@pE}SfPT-Wzi'
+    '9oG%sWpV0x6K4kBCcqrPd%=O24bs6+<Mh~@_(uIa3V=cL+~Gex>Hjh8|FqHn&FFKSbRWC)fl&aa#)BuWl1C*_YNr?u(vk6vhIQfc'
+    '>}FXq^@@+0SCC}qQSKp221I=Vh5q`d{}bWeUGuF0=xLwuyie{j@e`amjS-lOVtf>p=TVe;Vb3|*eg*q4#$4u?{DUR{*t3L5Ov?bd'
+    ';Q%=tKoK*XN9p0<Lw`8f+!*<)3NT(PD;$XmINBp8N&u6|!o>D?x+yW;d3b@Wn1?O*c}RYMbKsKE#Uxsk&hNvdiiqJF)EmIr@ywGj'
+    'JsxMX@g%EKn5Z|Ih*?i2Flcy`TTv|*xE0o_&vF+BJs~i&xE7iPpgrTe#U0RhJqlz*3vW+!jcht_<wG~mGB_m2$R&a+GrPZX0Vq<S'
+    'oLC;pNNzVkCK6#5j_0({-|;cVWi3<*;4iTNb_Ku2z_>;i?g&4G=go$(24K-iq(AZFQmiF1vk7qL9`ejR=QO$$GeXFNDJgDO6u4T_'
+    'QMp=DApxv$L0mx!;EvURF^(stZ)_oujYzW6-fZoP81yupM@uJlLlAU;m?8N~(+Cd(h-+S)IJ2-Soxl8>a|NSX4xC{S1S97!fA-h>'
+    '6`d2;fztp^9p+_>0>2L7%LsXlk-04-urXc>&!RCdte7r-X**LuBu?e(7|Vxy0tgz$Qn>!md>Y|!Y1&eRVt^6@5%9l5f8s1{^d!mw'
+    '?-U`AmNRpOD8lszPEIH!N0_BqHhQ+o^WNzi(1Y#|&yZDGeZgbl06@aOwC*X5M%PqpZ1o-h#f3xf<py?1uqnGDj>bFfIcGjLoCh(m'
+    'bV|-N|HD3q6F}V&2!H?~Ny*h7baY>U6o>GzorLqFY3Sr2z90&-<|r`6aIgg@31wPIRNlTN`9mQ2wmS58LlPt<5t{JBpoM373<L2{'
+    '*h3)iIg@xQW+(u0=3dFK%fS_VUJ8l?QyL##j<IJC!4vAjPrGsoLZ;^#pnwH&*BV3jo$YOEK%z)EEJQuHGvfcpj6lX!o_GS&f=nCb'
+    'bJ6L0B#VY3BY0nBW#mx_drBu|xhMwf>*wd^fs|~Jrmcf?vo5gY`r~kd`hqc><gzNZ`RP*>oi7*Bc9<leia~5&i66^P<6;bS1m+b@'
+    'B{A5Zg>b4qok!C+)K%YaU%g*`Dkem4VIM$xnvScKc%W$dDZ<H^;AajCGuke*GEBzte1Xg>oXEl`F^%(Rg2!~UJ&lTq`{3oyv)w1-'
+    'oqt5>-gATb;t@hkFwf5D?|F1IryuVY$Kr3qKNjh+EU|FK^7G&YeIbQ{<U}e-WDxViAc)W??Z6OT4_ygA?r1dJWTbHv77;N@GX?^D'
+    'mhfxwL@>c<>UlE)p&9Wb)lqPqWJeyg@wwxE<`U7L!SR^Q;tR>{U|F>Yl0||2Ig6)JMrXl>RRl?TtN10r5yg32o_JmBCtF2@N(kJ!'
+    '*{X$`<My7_XQ3!Ov)*FY@Gd|#kEcfGqfThjL_%T~0LgGTkc*7Mc@a>T8qJX=X>a$1>~R-Fy6Az`A-&>0sXy#4p4Z14fFuAye3Pj<'
+    '%&X`Y@*zq-$73PZuS$`Z93%7PN!Cfw(g_0yv1f3ovefk(O^GsQGd62&ai)`@*&1M1Q608hbl@A57r7(vdC$SWk`GZB_4$ywr;+$B'
+    '(Q3~6HE#k)It>>+dL_B{qilK!u#X=E@WTr+USx{JaIgVB5*`+?UJ^Vh9s@rM28Ss)zAz7ySjv)KU0u0!i~yiaRs?%ybbVotiq72y'
+    'R-h?hQ}%bHzSO25z}T);0x@~%*H2n0Xcey*3NT~F@z@Qn8)9uFDTG5MHyxu4fYrqs#Zz7(@fc2@06GOMz5A@={ZtW2MqjW8dd2an'
+    'ILXAS3x1NPZEhF6;WB~+n#FlRJBMF}8^qplJ=zY@5}if6DSl<O732A{OYtkK6jg*m)U(mn_tQ6d!X@jU4)iCF`-PFVRE4pNkt*@R'
+    'Tub^kF7k<3LK>Vsk}Qvp<1|bNm9&iq=obj9Q~SHe(^P|MX$8Tam#1}T^iA%pkT6a3A^I_2Jp)1JISG+~4h*IXBuV^DvXw&M>cG`o'
+    'KvlE{JX+700sCG0ey601rkS8BCy0pgH+-Hi6h@-9Mn07U`lAJ0A(4^@Y>r7zym&&)2`*8=h}B${VjR{#4{CC?r*Yt2m!xx9L>ns>'
+    'r6JFEE{klddr?rkW=sGd<x#<*j{G5y+W<c-qrgrdGxeI!^t>Ev_~9-Y1RJkXM;r^%bQ2Jg+?;1s5n(rs1>E1G@>><$#V0Pkq!w%K'
+    '_7s*9=o?3**HDa4w5Lw3&>3*M>cEJ%iW($928S2jxV`-ZUv!+_k?(xtY!W5#aG=a|G>58IguY}|NveI|dtoJ%C?Zt-EQ!DxDCQ9j'
+    '2jUar{Q(w$pTO|L@4K?}@pPMI7^n%N{7IH$Ly}4WQ&Yx8l-D6+0W*CS&LfMc*e_k$a;8?;q!dqFR1Kk~qpl$mgbl435zUSXp2?aF'
+    '7<=>_&6*7G+@Jy_%1HvyqgQXtF;21smJeP(#qJ2E1b7W-SE%=klGeY2XBiH@+}IfLM5f4H@q*)FftM^8@GIJOc>=^chCTtn27uzx'
+    'G>hUyh93odzZeiRhC@Muz}19TJ?3Q%^Dc<uXix{B9`Z|6=}hGB2kM(##c75nAu46R@^EE+UBO~%vAD%7LlFx{AP~_(q`CsaN44=0'
+    'z+qEXA=%9S&db-o-+4BE@+@HS)Dx91P>aaapw?g>fmj5@0^3vqfME8ZfYOng(}Yd88GU%sVC)6Pssz`Eby(*ll<Yh{clh|zQMK(6'
+    '3V1yHr%y+pqfx3-D`SW+BmtR90!KMYkhVY-tVqYs8iaXp43Mz!HhrsmI7iq!cMGV;8~)S!<6nu+g(6?nILU}XG+Lr@NxZCNPIKk3'
+    '&hXKIU=n`^gbi3CbrH=;%7Pys=xyV{0qR?TyzaRNK%A#^G#1rS5>MhXi~;(u(+G+ci)aGRCFwiUthkm)5OxZ&57)dti!;C@UNpUi'
+    '_i&6VH0nYpyC(n6R$1>t^6rT8#1^C4RvbJAx0g{FTIW$fp~-n;rLe|ggqEBm3sPMy&26O$D~lIZiiS$b{5J*?=nC?irHi1gyHGq|'
+    'Sy;n7rXx&>yw6UHfh9zpGI}~i^mJ<Arc>g?5bBAC6{;@$9;TN@WuuVUkT2%XT?w|P*_Zy%(pgQQy08T*$$G#^(Q`kKj((3QypBsN'
+    '#lqWUm;r)_@V~p_<zB865m;v;OcUnKBPA}3Mji+r9=hyAQ#}HHaR?mZ?!jxxsL4s2pUE}B#8Xn6AX>!k46u?5zLI0rqglzdUJOr1'
+    'O*Zvxu4h3@&^Q6i$eEBetq`cs=KLL=h?F<P|FgMuC=`QUB+z1EfG$0sWamWmUT8*HiTp&4_W+y7VfZxx)b6-ht1%FPf{U>l3@NC@'
+    'lb(EB9LUjGiz0g#+7Sa7iLWw?B7u4VFDoqsDic?o#}p1EtxTr+*5oqbUz2a-9~R#y2bWEl?P8EISVV&zq@{-`!J@*y2$AqdXi*Sn'
+    'Veu-Ry5@2=*hK-9%o}<VL|bGwWE$h>92u=+4<~%dJR#1W7{eq!jl|b!e0;3FChTa%juE1Ocv591R0j2Bsz8zeWl;qRE^rd&vIPCs'
+    '-%qH3g7E<Xzuw%b&AS?`8LL(WKr!}EB9`E74g98+YO-NemTMtb@VY26<K`2vDiD1FqwpJCYatrS&Qr9#;kgp>gNYsOlT%m+r63$u'
+    'koJt`fxPGz(S37X%ztWntK6PiNp1tR!`aGVL#8&Rt0Vl*Bcq+HT2GDnxp{Evgu<p1sxFa=Jc<&g59^kcCb|0aG|JzAkd}7IUiEW!'
+    '%bAgoArW}H%ELH5CcfTN=cs|oe-FjA*d<SwL=gC>zZ$1YQabTQmod(U+08RW7OVrJ)dF&Umy1X$D}FBz$bJ+h&5<*G=d)xTG`lGj'
+    'kq)3d6mc!JL+i<#gbP8vYG=(9AseHpiIeis#swlUDq)@oGz?beS!gJb;Yf^cE2>01i~UmC4JBGLy!osG7mtR~dZ>z!D9FFfGdAIo'
+    'kMA~gl1HRa5#+*6DCm9dyR9;j)PcNx+th-*eT!al!DpZPs1WhqzMXapOwy8D)6ie>A=mQEvaYgk8x+%4F{FQo@)Af(>o6AD@$1D&'
+    'R%Y<LazMC;ro2%b$(FB>2C-NJz-5FgYJ;`7*#R!?B8g#NAG@eATv`~_<Raa58s$0}QK}k;IFu)F)YNxbJKwT43JZ$mfmK0Nc)hsB'
+    'KLsqy@a^04{^)L7rHR9pf%(lf&|J-}Q?HE_Mkc(n^-!sgV*UCYWnzG@vu*#H3PF*hXx$fszxuMbylwnV+9Q3yd&cnV1W1>uLuPZL'
+    'pVCB4;&K=DU4xF)v8~2?uDg8D>L`X@{o`!rp)ZN8{xG-${3sa&K$iF@H0$WB<hH$h7IC0N+-e^+O$L^c3}F~sBAjem$*d2`E+*eL'
+    '^)#%RRehLe%W6vVop#syymt2?7<1K$25YM=n?dMqPID~nTSeNTF_Nt+mri6BhO^i$o4+$$&g!D3atK2eWR(zY_pqdJ4y$>Gp|mMH'
+    'h^REH=};xt!?>2kBAWWBSQ-L2Z}@i@itc}rXGfBbAK|fe4K*3+ki&)a-qIwz%C#lZMt)v~zO678d*LRiN^V;>t1=n`KHqjS>!p|<'
+    'ekkhOXRp9V&s)S5sMZ@UL_C@Ig=f8m2l`>`CZZTJ+4#ZxDw6b%r~*%0GXW&{y|1wmw4|;}_9|_ZM|JKt|1m1P?<lUEmCZdfjMans'
+    'noCc(I(5foLqmWziEMWmNpw%<7r)L72m@yFF?(c$cUUvMuxCo{d3T$sB{?a{5KueSmaDCs*58m$5cK|>3CZx4u5E7b_!pYH*3w>B'
+    'z+}+;RdcI3u+9W2lEbn4M#HQ{@oX=m85U?cgdcktHBF4uMO7*_CF<8}XYvkbfT{2;N3VD1Gws`*)9RkKgTpObXAewIn%T2|j}vVL'
+    ')|Rf@j@IpmMh~E){UT~MXCU*<JD(l;5hjV}nfgvy3W4uT9fUJ<)Gs{WuYspWiU@Y%rGl+~yv!M$5x;OoiwD?@p9c4Vnk!TJVW7l;'
+    'bEeQFM@2HHcxJjv*@j(o`aK)cI5?~UrRg(e?bWay7t{C{_*&nxtt#$RRGD%6%6&(DI0MW9Ouu+KHPL~MzAXT97sgtJcU>s~!bD$S'
+    'A3^$LUDDZVTy#&+l03rDh~GgDL%WM><=4pIB4iXrGRD3OZwAw!TCRWe9^Dq?Syv(mOya$XwEcm67Mf}t$$K0LHYcVFXEoOR6pqiT'
+    '!$QQ-<ya7iE31cJtb=)6kiBo)*?3^F5j6j%4aIDsApp~BVb(ro6(~CLXdmF7c5tM1qOplNntm|iGk$G2Pt;W~D~HHCZVtiuhYqSE'
+    'SE3F{;=Oc+&X1A5m2oiW5iKC4$f|rIec+#yR~(1rG~!n%LgV>RMAwXZW?+p_=o}%-cm)GTad-qc#pdsZW{pwZ70bk=Vl}WCvEylU'
+    'j<j_#y>-t~+j4aZxS|#gF_CDLJdc#wLf{@CJj0RbOTYy$4M7I~)Gh=G4&#VDT;+7FErk-RLNg}ap&3N!Nax93{4C~ABMw^%i;S!+'
+    'H0PRYu?5yyTE=M=t!SQ=!%ER>>U5Q5L|Z^iMBk7QVYcn&$a=xEmF7xgd55RC>=^IH4=OmNiz7kWM7<@#^<0k0FrZMN$v3LRnSbBK'
+    'Ye(kRkZp%}gjaPk+gq3fPzW6buk@x491#G>-c<+%1Kj<0(FARChBuG&W0A^lI4170!L-&3H|H=JO5h?rARv)AzxfcMWbB}l!|^(t'
+    'GJI#?0K!f&2SpxDvPBGZz9pK;Jo%EoPV9jmT@K}0BK@=V5zoI`Nz0vG;Uf+cGN~z4>fs(3K@a0e5-*N2WPG$9<j3I0-B$(%nNKN#'
+    'et{k?#YvQqoZNqv?d2JwNAZ;IVj!__RK-_MIkp*p51+z8$&zR^7`(1ZVC{EOIK+UEw}*!SkAZxI?{5yDfAzKVT~zj;%Aq;^{qS5U'
+    'P6)^;ABP|Y1n;mD=W*(`jQMC07G<O=o8TtPT;Lkeh>IxU7#x=~Q*ih6DPs)HNnC>SlNj}=TvJBfxfiG^#==LkN;8lI9RhUjmmsfF'
+    '55|GMdZcX`XS6)q=!DgyJTUNL`{9P)8j^vb9Z_dUq?-W1Vx&>jUxWyV05wj5aqjFb<Xxd1$cy}7JVsU9c)av&BVvvjQIG?iMieFH'
+    'R^_b!6{B8?M0RB;v<#e>Psg<2o{Vrr+KL%Y@Z3hIToO4?yfDCs=tzX{<>5K0sBMUBiIHRqjJb9KB*TRVHE$31wH9WrZCwb-Vd4N>'
+    'nF?R<hQN7-0RbE4Ox^G(17Iww9COlO_Jj=c8RVt&^!48E&c5SS@C<!njR_zt%<=$pN)XpODlB(#>Ch6bSv-X?Bl?MFx)35&lokjY'
+    'VKIs0ZSwxc(5B8Eu{TTbR;0cVx=350(JjO=4n;;s=xo{1?j$TQg%ER|VSZ|GNkfVlrch-VMxMgrMt!l8+y)3b5xHZDRstZXTVH&M'
+    '+qhy*esB_9a8=K8mkfjOI0X8Qqz=cTBVozhN3T@2950esN3M;8UPL0?d}oC5+Qh|yC!sUH`PaFI4+IT(xd8ewx%n^!5Q;cy5dr}L'
+    'i+~Opl#E2-=0o7@M*^@~0BR*9eeLx7JZsD#;v_Eb3&8RFiq-+gx2B>f<`^JDo=z~?8UFCxPyX=9{F7<_lkY!y`N@HHQV#><bBxo*'
+    'TSbYX_#1(X`5d69#S!543Z45IWXzCtF4ls5%ka3CrbhaP>x?vpCy$wa#&T8QGGoI4Z!vCN?}ffxcFPX@bR>wAXNdLdE764WnR^9e'
+    'S@y4JrI!I7UIFP)MW)G`pH5>8|HFquAa{b)adt|N0@cx8QAKnTC9LexBmTlr$)H6423a^b&w+7f*uDeSz%XP4&}}rSHO_)+RA!mL'
+    'j(v5??>QB!VhoQ@S68<p>DSs*aj2p+r~F>TbPYgQr$xX6KmomF<|!B>h@{T|i5(?4nFLN}2~-amUZfh%`nt2ZvGr)_{E!*(|Mf$_'
+    'v`~I!JW3Kn9r8?Q^DQ=Gj5$_df-;d@fMEy40vDNy;I^cOG8q~0<1}7Vm1}feKP$c3p&*>Cpu9d9LKhz~7*-j=XG^!Vjmbm|yAV8E'
+    'N@(-Y^FFU}bP`MjsBVhc*p7kR-+X}P6U3*O@eFzBslaT2E!PYNLyrG`97d5(G%CY+VdA+3;LEB|e%pemK+zf<u`!ygZKka=x@eT`'
+    'YP*|rn*n=?j0vn3CUe5jWIP7k+|o69CTy^i!u5;zSjN){9h=k_ATtY9n<3X8Aejq-o?ud(v8ae6M+%)t_Z7pF-E*&q#dmGJZAIZ>'
+    'L(?~g0Y@sf8B9O|R`65HvBC<min9*D%t78t62n{n?b`#)$%99E)a=*@IOlg57^2Iu3Il~ZO!QQ^Ex;<ZhlZ8bwv5)e(E0>BCno3a'
+    'w~U5TtGTSr7C%$kD5L;tn}l>5p2f!i^i^&}3D*=rb=bO+tt}n&fSpvSBc)LiS@A@AFtceSk~UC89uPK^M;PPr{OJ{(A>;|4;8>lk'
+    'BJ&dBTFReQ_%0AF!0W)XT#02|IyWDZn-7R4JrI|t=>8C)t7s+h0lo%iD#U{izt;#<1@ubqa=%?chl*1x!Hf~#ZD*NDGg1+A18wSJ'
+    '?m!UwyHdT=C_)PUT=NHVvCT85GHaq56RQ|+l$RR4mzcstGAw}t7kRnmL2ErK$=z!SAGJldYB`nOaJAA|_k9wVs5>{c^6G3^N?+us'
+    'Eme1m3Rf4=DtMm$`wmsF6&EKhbh;U>O&*!LM;bJ?`(6itR5&?oc$%eAO@)lzi!uN;?}x01LN)^Pa8QLFDb289Ul9&mK4X^}nFr{T'
+    '$mmI1;er5g5`jc0Bbboa@$~6LRniq~=n`PHI*Y=}yYSUXg>wNA4LiL=)i!FIuxTZ|Q@T)_FiJ}V!spd;rOFsf4Xw=@k$!i)kQ!do'
+    '7_i~P8Q-+nI19xPzePO&_a(=V+6T^BLix%7E1fQ#tFxtB(+pFmLOJaFOPsX1Bo{4<5I6@_OhT9`a_3=s>il+^6$Q}MZ#1_j5KEm!'
+    '0hHB+u?*A%eK7Va2;;e!P%%MFHnSKU(c5uGd6tT5?s=QtCrGI!HEdzc))C@|C2AmXFj7m2zm=kLpvD`)AS)0k!=i{dMPlLt)&tH0'
+    'Wt%)M-dDhakw}Ro0W-y7fKoNHa$^yuY#odEw!|pWn-3X|q6pK1c*2Tg;t=VJ0Qsqi?u0H#u13jtO2s3_;$JIy7mm^dL|#JIGfd(r'
+    'nL#3uV{#QR5+J=tABTBdBJgXSrll^dTaJ|9BC$1ZL|nj?@H%{7^L=lmGJ0=#3KPcQ_)LFEDb&dAt9XG!qOe;Un#+391EtLtdedd='
+    'cpDA|FlQ2;wZ}kA&gnzdxzY7rl<%Qex9*&)9SB_~^uDhAAB&T$N~X_5EX40Qy~V&0@?-7u(+rIu#%C%2V3!zAG;lVw4GBfUNM|XT'
+    'TZymmIFJ*{xrn;p(w61ZP*crK^O)6=6&@#DRH?0+zd*X643rn_&X`}4BO;qwuyh?bpu8PlA(G(@^oHyFj1GH}sii(dhkICORC<Aw'
+    '=Bf`8EH?Fa$+8Prz{2f-prv^NCde1hqw*vJ+D;)(=#8+=raY-b{>_HUmSni)h}_`8KL7QoHtG+y4SfP-qmkM<&d-P$a7^cV!*78H'
+    'vMtAR0<sAJ$@Z1|G$SdvFDDo-7D>!uR_mlT5tbUtVpJO+JW@s@c-B)Ae<{OJGr6P5os)#*wWvmoRYX-hoI;ETgT2OF+ow@V=mhc6'
+    '7%6%#6994YD-{C+4FuE(Ia8l)DR%t5%4;;HIGr{&1P{0f2{%zvg^aARzwUQCn1C9HEB3xzr=j+tSh0Tfeki*bEg#dkx3B2Wa?KyQ'
+    'xSg#AkY*oyuMembS9b!<Q&-D%?8|Q5rKPgFAipnd#1rEhU}r=0*FeOC#fzv^A7msKrQUnSA9p!o%&_-~H8SjZdSg7z%#KN51Y!|+'
+    'n<|m4*bmj0T743D58ga|y0i0ahw}10f3o|6e?9s3_5LCMJluV`^Q`~+&0*bIcm$Aj`f<CaR;0FPpPq+t`8>;?$7x)gY;SI?X^?-k'
+    'VXt=UoRG2AQ>sgX`+)7BHJLXPhkR9U17`f#^_S8_QE=9Ru5CgLEuh-iS<8~tvLq75L={+&X|Y@<UhnZFiNbWd1i9){W~B%neOd=T'
+    'xhlBNT0b<6iwP2@`)Y`OhBPT8Ce#q16lLU*RKgTFRG9fThwruQCF?7zh9du1qAoV+&%(f%O|x2q)Q3huHn?MXA}r!WVSW<e_AX_}'
+    'J?zrR%1MFklOta+%?VK&YJBb+`>R*!w4{*IAu^aj;M`|uJ{KIIh;p(L*%JSV+@LhWS@tyCC=dAVejmopJS+%7)Fh@MS3MQj56Hrj'
+    'rDd%?apYk@gw^@XY0F_x%lO_Fe7^7<R3L9`=w-)g`-UdDv0PS38<QyEiF5c5t=>jU=db_qzc^P0RW`Zb+Q{CMhDkBOtrkRixXn8^'
+    'NK~UaEcKd^%=3Ss@{u_Y2V@LnNKlBwY&Mja-?@UN90XglrSrczVFf!<frv*b_6z4Ete`Bu0p@<|tM$!|^{tJqFa5yv+qCR-yj!yV'
+    '^S&Iu{$b}8L+X$Cow9pIwXZTurGiFiu?rl{nof9BplDPRRu(8TkxT^>&{{Xg(^+BH1vJjl84@5-SuhX+op%wM_RQkUE<kC^w&&K2'
+    'o0n0sLXmgh-TLc){!gv@Bn*%fC_0UWE)VUKmiPrj5%xxWo6{sgD5En&tt>$NEZvXOn^9s^%ayI=kPz*JLapaRBP7#ZfEE)eilWK}'
+    'mv^57q?tjHDP+*1;xV!jvoC^qQBUyw;o%-_UCnEQZG~kR;{rtOoT_OH9}YIZG(tvJXqybi2h+(+*?9D51B8u78(a9#!xrDCI+(F)'
+    '7eKdy*B;ISfQXtS6%~Uv5W5S62nj<s9}uk3%>BZ~ztfu!?-<<!8g>AimBRP~PhTrnGXzcZoY7T54v<x?!hsWp>VqPX<bL}o&&~@V'
+    '=C0q0R~_fd+T|ss0awBsJpLJ`BW4TZ&w$`rvvsa`o0c$8m@*>;m<ynaqKePLRQYstdd}VAz;lPayx(j{s}gA((B|`lDmparMF3e}'
+    'ZH!=3zjoG8ZSTUwCV2e`Ylr|N!7lZbT1KwB#0v0X0mporbK1JP=);=(j&*bWTNaM&-@u-&(V^|v=H9=eyCd47H{6ii)gJk(kX)jk'
+    'vqf)(Zy}rR*R=J=P~v0neuuH0&`T?Y?J{=X$+je#HAY*Tolr1X-rz=_;1xy<Z7CSvVkZzLD8Egx(}EeP#L2uynoM!$0Wp-)H5b(u'
+    'N()Ts@bK)atAwx|wqiMZ8gkx>Gr^SO^KGO32e+P;E7Z^ch?|N#17<Y<Npn;C>9RE2n$FgB)N5=5>)mPsyUplDhqAHK&R_rZzq7p@'
+    'xUr%LW1!@bGe`cxM4}QpI!q9Z_h3%6pcdPJ>_Hc=vC`teIhZlXcRY{EJf4`Tp(hR7Pn%|TTF;kfILRVWM>Yu7^Bt|qw5gJEAHz3Z'
+    'IL8a~{N`T~iTS3_u+AE7=dLpI9SbYwU;bZm=U1NJ00{E;n$e=+8E&<BrqhwKx4Cg)&12`R!rR)&86T#hrvNiN6M_Z`A{&EX6S%jR'
+    'Twbdj@gh67C({2q-)uX-`OR;>0NJG8#vs^$>ZfLRP?*FRRdmT;<yPqd8NmqbCU0dX8(3Qdk_<+ZP_YqiQHWP2df2iwjG!P^gNHT`'
+    'ngY+aUVc>sTE*XiYC~m}CPiZ{2Np6`9j%6w6QGUQwx~H8x<}O|%EqJRy8WJ-87<eWeArs~KsTZMeBYE`%w+^B+x{ZjR|Gz(47{Yf'
+    '7>-tWhT!RB@3uiVuf4)Ox79_rh5uRUuJF5q*RLEPZE=BjX#qDAElqasaOWQn$3N`+;ebrF6zL!W^<IlqqVo9}C!jHWw#Z!ygZMb{'
+    '+yle)Z|0nb2}Rt-sdD!cM7|M(Xr@<dMBAEbfJ@}YFWTcLsJ~0Azm^C-yQ|v$I4x=6F(gAJ+tX{+mJ<#`SAZ#GjWt$O*)V$+f;1*x'
+    'woio+fRXi0pbed|2;a11V9InHRkKOt`$g2mY_0EHxzdtciVPvXzZ7H_9saOSiGi53@~CWYlJ5AVi|+WO=B{H<4{p2I5njSm8DOQB'
+    'y}c>5`DfPVJ4T8`!`%>(KkF7{0Qs#@qBm9fK2uPV?yEVl73+Orther)X24#k?eXVrzJUr0B{De@TLlx==bv*=REmvIiJXC@>!AWG'
+    'u8C^#e&UI<wy<(MLNWsi0ubIzZgvD>Zo#S$-~<taAPe}l1G58>hKnAjtRpholX}LpX`FZ6<)!b>Qbq5oHjz@1Yjjx%IVTK+QyFHa'
+    'Lv&6t-;Xvdkq2*r)v3H`lq~JYx2DiDbARQ$%u19f3y1G*Er|KNs`o|f`!;=>ezq$-TTs8Gx`hTv>81Cg#|$Rz9ek&?EP~Il3FOmV'
+    '_`~qVCB&;P0n1`>8zYv^HU;_D5F~glz5BO1(@3r9&3~T2A~^%4xTf7)U)6Ttya*k-#`xyLF)-|BHy`qN7L%?pfsLkklL!G0&P-mA'
+    'Je(6>FUWi#FWvy=@3cVnI`ne;I-I=0U>jb`4Ub`&eTmTlrA^EYzX!uHO}<wNf9XqZ=64nBG~OB2y!?eL<Q5++EwQuNd=VXwql-v|'
+    'qgj_{OZLQy!s1FTS(Dm}wOsDQeNdjdI2&`phW+3AilZN!qrKaeIj*>R>$03C3pTdHx{u5GB0+pV%V33)ON+Ib&G3ZRdz#Jhz`936'
+    'IGEe>#iP;s(b;FilPEquDSx}Y`J1hck^1!cQOLg^g;Wfl*N<3?oCy+Ww!;`f1jq3$*wLgak)gz>HinjR3=^Ozw|<)Sk(H7z=lwpR'
+    'j6Tk$|4zi`a;ZE!#;_}X@xF?qQhhrQbCmJ;8{Wzb6XX~=bA@2R6t17mEU)(A!@)zkgb&)|)#}R}uGrd)IwDm^pF`~WBE148FkC#+'
+    '=2W!{R`c@a?}yY53g&&8FSHG!?ib~UYcFto4WIQK(j6DuO8u*io?mX*QGrH(hg@XmVgUqU+JHiDv*)Z`mVMYl6_qrL(-^u3K@e?u'
+    '6)<0Gws7F(;(ByG)*Kip9h;R~xIv<=&{Oolz+b3H?QxsK{^p2TvD9G21RjXW$q8LoCOlFoc7)9*xp^t6@GjwNwqb|*PmcLIalrdO'
+    'fuInse-Ugr-V2!0#n;Z0bed=J)Y*LKJ5LsiB>FKr`XMgYzj*lT;Nh3f(~~@#N9&tgkATh{LFdjvI1BSweAmudVjzZNEDvMo?(-MU'
+    '^UuF;^=Vn<iX**e#9!aGd6VM{UnB4F61nF`F1?<ew7LxAk^(d1VQj~VC1t8B(57}297(10E~rv;1@}ZQ1)CMoyq1>kDAH2OrFnGo'
+    '|5U=+4?qoBCcaxjJh0cGbnP3%aT*g8XaH!tmu)qmbl)lBe$2gR_gRX@6=~#|AW+87_DpC?L_wFhj%xRXGVtMD&gix+0}!<HX-KAx'
+    '!uBJ$_2y55sn1PEyjGS&-6d!<3hefW4u3ehc*cJT4G^0l%29y1$RT2II#z#{<I4p3Rm9(}KkD{KVBXE$7oqwkDP$)nc=KcKpb8o>'
+    'Ao~v7e3$`uMzeP&CmGBg6Q9Fa6V%xn{8*bQyM@hQ+Nn_o>b8j=Fz?<FK*;QKEt=V?!4O8=ItAjg8F9nDjn$s}tyey_Uic_#-c>X)'
+    '?})755D8LPK4b_OEywsf)+#mjlrG6IVc%J4=#lcAF8N+z^yN**h73SaH$K^y!<cYsqy{$`Se?Vz?@;G>F(yUD)sE<fc(jsqH9Bmz'
+    'I`S!Hc+c7FP%@a9u19;gu6(G*SMgHZ1KNuEjC&l2@5}2RMN%rL=l!=73AZh%xU$OlY|O7^(e#860#wmaeRednyN##SnqU^txvFis'
+    'MNQ-%)I_*|L5N_Kx_Wbz$VIkH6V08g$8MZwW27Cc<_Qie1S$k)fCUK{nH&>d8*h*66A$=Hzi88Pq1qkY0$|b`GR&`W>e|7PkD!O+'
+    '5D8#Wl_H5f6LY5dtsV=ePi7}D-g<Job!a%e&!MREwS#`t4yAm?kPyJ~)#Bz~gkzYvj8Fz1bh!2`;zfj9D!S{qozrLlSoi1}=xX)Z'
+    'xDD#=$?$Y<r|Whv=<S{h9eXgtO-Lx7m##P_BV*kO!EGLqj^ojy@G$?o&w(&SZkuwg!Z9m%_<kGL-C?t3u|q;^6MkwQfTlydSduvW'
+    '$#<es`h6Iy?%u}-h5N$P2CJM!Kmr*V8^=U@cudsrn4D1SsDx!FA!i)>cHY~ga7wYRu*QvwzSE}<&_~_>I-K6hjO!^0@pVlZ%akdJ'
+    '#S;&2d(#H_5aU^+ik31INX=g}qHt!Jw5|Zx34q3zT{kbd4zMU&&-~U175r{btQAKf*xU9sYIsG46TgKZ#UwBfS^LI0`CN592Ief2'
+    '`egl0n`QB{y2--4)xsY=xD~tq!-{0FYHZTdz@{NR24OntGS-Ya7?xNtYNyj!gR96^F0A9X-x84vJJ<>|o{O|>(A<!kYFz<Cm=U?x'
+    'C}v5HfiAFV$^342ByaB%y;+q;d=tklecS3<-F>w{K$6)=^?MM8(o|k9(kxC+UERZ#cM^&L|NO2R9aZvnoO*@vl<uxI@5Jd|6-!@D'
+    'NInW?Rg#FC0pGrzUVVj;2Gz8Cu0|UpMw``iICz9^Y4GFG;7jrA%fV>r-ZmcPdSnBM(q*m~hH+VmT$iD)hyupeNNNBcw9t0;YD4SS'
+    'Gjcv9v9ssAKA<1Bv9?UHYqtC$%kOeXPyla-u4idcVyN$Hf0nmz@yyrx7IF10(gD1(w#9puyX2cTht%mk`_uFbdKuN{BO}8d3La;5'
+    'PBgW*H4hfqLSHB~=35_nEpipe>{dR+n%A0^l9BF;)g!YK8@FA@`}|6+N8j08vS*XIM5gx`R*=o$L@1HR81GTFa^V<j-b~PlxQGH;'
+    'a0zgv61VA;0Y*f)QLDBbBTbHL!UIbU51NET_WRAYv(>uu=H_TUkezrG6(o0FbJPh%6E<?TOhNe={PjQnR~R-rGDm&j6oBhub8v*5'
+    'W0+hP^qRt<<t$-C^IBlB>n_(?rYimXJaQ;Z*vSvY8sc1hlOmF%B*M3;5Y&kv(QE?qZ>YhZfege`MWg5(P2Gae6fyO{7+nHFPo4hU'
+    'F<H+38_9J7FP)$}Z%J|$V)WyPT^G=fS)jMKoyIJ1-YBiF^S+9uhk2P**kgg23dNG@^&FtbIJ32=M<%&#f9Ltm{?4nXI|t(zufGc}'
+    'lHww0GXx(RIzAp5Y(aKPu8tL~C8t!Fk%KochIbDmFtuc;5y^|Q*<O2cf-;AR06jm7w12xag`9-NIIN~|2E1u`(xw9!dc{!ZS|w{k'
+    'covXh0C6ByCA+|+cA7<a9$s2n1jz2Q;siT%^{sa3J^)m1F7sX7YUm_IrfJgUDImMmJ%hBG!(!k)wu@Vpp!JJ!q6^Bc&~5P*bQa33'
+    '@LyYP3D*7G#TdMLo!aJL4ToJaYDUB%G>;a@G%HGA^T}FzM)7-s#JK&~6+&;0i38b~>dqc+i9D_01pjREZ>q5g%;N?<Q)=&3c}VLf'
+    'M^Equy>8><>bs24!$cbfEj<)|Vk2XB3-Z3KMSwTB9#yj$@HV<4pgx4?ZTyZ2mLG2UWCWAhN{=fTFL}x1m80GqhLH3e5+eY)W#?-2'
+    '*2Xk|hHj*uVM@<@43JkWP_Se`;wT;leya|>p<I8ufTy>u2<M9gWm!}sZ_^I37Hwn0`OJA}F#D?^Om@>agmvo51%;b$M@&#_%k;N>'
+    'Xx_Nz!2d999bGF#>l;j?GMbcn)u{o)X22ntnCjZ|U^f=bkBOfs+F^6V<dFSJ>=R}|y4)7ASr-H6Vz`NvkArZxZN^JL4fZtT3*)I%'
+    'rm{1UOY3%5j#<uWx@LUKgcymq5R?@Ga&&mbk1_&kWdC<I1EL>=_CqsmKklIz)1oX~v+P~1J$JP*Vz0l1g;7`qIi32Ll9zZ&*f4yR'
+    'Xk6NgV;dcPIVQ4t)=XwNQsc~PGghgV%5B_QP!oR|QB1RzwJ&Q<1eS~T%yy{|;5xIj6VB?q{5Q^q<oYe~3<SawP)ta`K_TGmXe3dt'
+    '7yuqOmk#ST+3avR#3v2{r*EXoVVhnvwZHIHHP)&}$xqll9v{v#y4I=%)sXOX+9oYwGA})jS&LJ=8iUjc`Za<JTdkOXQbt;a(be3u'
+    '#qMFvrK2YZD1t(7|5*i|dy>;<U2PBX-_5@y5jv2PV(>427D2SwmI{Urr`e*6rnf<)G?;7PHUaY%I7DAi8E~MF4Y`P}Or$uJD1`Lb'
+    'SbQmRMH(MW<1T((>p7nZd?>LBDMxK9@Ml!i_wNeeqx#va<uGfVH>IsX595?Qi&I`#b=t5Ayy>awYMff$(u7;+oyvmg{>sWbN8l|}'
+    '3sAz@C;%SGbN}h>+acbLIzZLZ*7EJ!(c8DhXD(m4k)*!zr#41N`F9NZrGxN{Js+TmqtW>Km7EPL4D16q5Cg=>pD)yD6mN~dI|+>D'
+    'nGx?k?%0UREhk3=29ro<&VxiHs9#WMdl@AtUt*G2_$$v$i{lDW8sm_dT3F+t+`~mg)Pjv{_w^vGI2JD10!gYnQjKpUUX_`l0rx28'
+    'u7}>faf0Ok#~=^q<N1++zO2^CuvE>7|L~}mP`iBNY^j(px0qw>t9eeWvcH8r-P+h_O+w-BvDIUK^I@KmUwnLoDD8?GSUN8=4E_F5'
+    'FuQ=zs4sMhH&T%I&>Mcj8Pd^t#@ccb`_0MF;UmT?QXnz>2%P6pK96b^Ss2*Ohhq@dQLBPLVC0V~fCsAbDaDW%F(+vkBcF%q`-&{)'
+    '<d`2)UemISkdkTh4h1FWxX&6pJ6^xfq>f&2m~(_6HUW+-sA(o8S=_c3UcOTzOIxZ9oiNXWvmW`yaiH`pixsp>P7{3|XC%T!sk?Np'
+    '*)liR0l^iyF_7N(XXRIGZC2d^j`!Rnu~$REf60-T$v#M#;v%6bCqP{7oTPFnn@o}-QuT!F7Tsy1XH0_X#G*Z<Zj~mmExgXVQk^aR'
+    '+d}_E&sv?Mbs^@Q>H!y5GIj$uSeSJe6qN$!=WXi!o)u`MS_IsFf%-eaXHZrg3`n7zME;6^iF;BOm65(dRfwOgUAS`x@~~>*#hfuV'
+    '->yK=)X?O%tvesWR^hhQ%DO_J7bx$gLhdy=yj54#k#~lB=*u2d>X~*`YrXVYZSRO($k>LC4&GaBv4CBEClXDW)AKaRK}q@yc6i&J'
+    'EGoB0$w4cGQq-<sZ0uJZ?j?41w2$y5LEZ}|wcV=n?+WsggbA;4A$>1FQ4*=6ai!<BY`q5uPrRT(9fZbXZ*iHAirg;r4IN37-l2zm'
+    'J>|(-`?5(QK_)f_Nz+djH6~Idy;Th=Y)uOZSo_T0QAQAvD}Wd-BsA>ykHHd2Rh+cAP}G#9s1$7d&UcL@QMB;B+|W&kblbUgv!8aH'
+    'k}qx}CE7)?j#}-^v__YA(DU616^Tr?GI+fw-GLFw&SRj)>mo|6rvC9c4KgOjH8xxZR#;QPQ;gind{K5C<kmy%7143Q{!CicW@wtU'
+    'YVjxn))J+t?M=>6hKPk16(oT(kcEJv0j3ek9=U4UoU9*aK8+Ec$MC;J4p<?p3ZhmbXsJDTl;p@dHKWTSuE>E!_JXfj^I(DUwKJ`9'
+    'QB?YyP#%NA9kqIc6zoZK+~EV_&4IruNGUmu&!8u~h0iNko`W?q!L~aP)*W8W=gYxWQ4BV=rppn`F2I$LqT;dzDK-(JRHeU+=2?Cz'
+    ')aho9M!y3+ieq>@X?#IkK5tMc^3j?ElPtkY&b+prIzA~$0c8jq1R`4DLy`+a%axQu29o3L$sYru8RA=YOgf@}w|Zu%A(&$r{E}G6'
+    ')Om|@)=gU)-22_=TNnON_`3)}YUFh9od`M-l*>f#VtEL+1GzEr_}Xf`y_)h%xl*+McViJ&8!vvwF5HpBATtYLr-p%~1|XX)WXAv{'
+    '*-)ne<ql2;t+1f8pi_=Lz)#a2^CVT7M}=Z{({j!K1t65dk0&H<3(GvP9ed1=hBVL&lf-v}Z4wiog;shBmgjZ7C$Pf$j{%D--g{fF'
+    '@7=-rR(fc6@%JZ-|5He#B9G(M^l=4^9N$VL??foaw^GX1BfRyqPS(~hceLzdwOYo^SyeH-kVB(AxRAP!A^sEK&1@Iw(LNfr1v1rh'
+    'p*}r$eK0=UfAZ?!>HhAwJL9L{@4k2@EMj{i-w|e-X!F`r!iA|O!>d6t;g3w_NfHL$lSxMXsvzW0aGHjkZ&K50D|~@z{P^aHg5=mr'
+    'WW%UZVw6Kl`AfnEA_r)9ksHmUW}?MFa*H$qOG4lY?2KNZp3}NG+wP{@?m8?pW8y5@;j8Y2QICp8?wXWOV{%#_k9~ck4?1CJ#3P(D'
+    '^xbqlhXZ<Cp=;z@+kkf(;gXzf!~dJ3zMtK<O=)6WLUM5@E9`}-5WJ|HQwhY4FQ$s!zY7<fL^C`iN-65}d8qw6I_jCAJVkXgD*dN%'
+    '%Bo`<xC7@2C4xhtY)TiX$l($MQ!bJjX3o`6-L8>dp@&{^`K#gV<ze+Uy?`Ioa83i?Fzsl?Hw_h7U9VVAr?N^d*f3-zH47DPKgaWL'
+    '4o3I4Qg!PRS6HZwBef{Ud~OB?E4%dXW1MO#5<6XRbt)I~wnY+3u7m(HY&t{pMbX0E*q(^CVn~6ZLa4WARU`)y_Iohg0&Pz~J0pc~'
+    '^lLZ;e#FJnLeoz5MJ^>gVQyBP<&n7Kb`GaShxK=Hj4&$0D-(TWJ@cqYe_JE#?{A;Jezx<CFY^S@5{zd#USUZC>N%-cjEVH4F_x*h'
+    'E<~D@dt*RlhlX_-cq$YR(0vRRO|e+cXHYXh8FP%-n#2Y3GpACdS`+=24R1y+N1fkR_&ja)P!H#&J#wwa&OdXu$kwuHoGtbZ9NO_y'
+    'vA*{rt*eZXN>W>1?0oKQ1eCfywXsG}MA0cRc_rRkXU>j@7Oc-UCRYg4OI~n!sq9fWIXwr&)k37nb0B9AQjyWRH6I@O?8&Gf=wg-!'
+    'Wi}=!OYe62A#;qd$6qC!rDmA!&&uKwOp>gKr1Kx$*E`N;o*Yk;;Vm_jdw!B7k#Kk~L@qwe2zer%;L+Ib!6(2ARMv;Z-rN8r`3d|n'
+    'ofT*96;_zf{pI|MiV{;?@J)&C6}7q~(=K;lXGTE}vf?C)?tT9$88!BHUq~dei>uq?KhN^;yxpP9xbV1>zqqqgSJQdRGj6&-btm5-'
+    'L^+$y=zBY?Ti4O%d(*dxgL;*BlZgWx1C?$9l%22XNj5UFqcxo7cptRG++CgJJQ6s69QT~>DFL(hWzX6CYNO{o+}e<rCr=|QAE!CJ'
+    'qsy^~u4>Nk7~pVG=o|i4I1uUL=5-}V7wQ3HXy|>6fq%o1FHdQ1W_c(nvpYr<a^|@Trm_L$^I~{9I0d-=awNPs@l#$9%P4f@VhAF?'
+    'V%?3ij|3NeIR&?Is&U)~U&2T^alZ81t~W9V1~kjQRE1y+6DMHg%a<6hLdS58VyTN^Jcx~P$IWh`kkPSB0O7GJjC%HK$sojVtgAdD'
+    'x(|)cV30=Vp1c3uw|H|bYCS$95W&v4ImF)Ik6~0>TO?GRpTwngMY(JVPji6(c+`P!K>}c^a}LFAjID;3(NhWvo88*>R}$ep?@<qm'
+    'e(pT-d$#YF!~O_u&_r$nkGP1L9y<4N12A_vCcLUg{oU0ypi?naKj%#gyjCs~*zm>>!&L8f=4-b&&p>P{!-pIe#@)eoj+)w-W^7fh'
+    '`*_Y<24E1+X~!&fhYVQIG`fY39^6l_THic8uC9)TZsE*axiLo=f!`upHpC7ykE$5IhB%lauZ!Pi*`N@M09ri5q-%64T2%P+pggJO'
+    'M`;)*o+t2Wi#8DtL9jscIrIvL>r@=AOL3Mo+aD4=M|6+=Bvf(CX&kRScZ?JoAsR8mrhhwH*4g8OMS8quAA7oF-e5{4+Ls7cf3ZA<'
+    'u!z4Tj}CF!3&%j|WEFxct;>t<5m7CzEJnb1yZXAc1x4yZvyDqVT{xZ#shX4Ca5BgZ?c1CrDa0EbQ0S&Fr0_AjLx+Yun_^@bEDmOq'
+    'e-{B`Ro0@hoJm*|Hy?og4XZN{H()a^i@@Z11k_8mhrG)1l(2*O2sUL{Xyac9RBckQkFOcgJABgrW7z*`bhX)gv_v0F{3}Cdqz5Ne'
+    '-R@|wkg0qPzjhIGNpCpnlKiHiM(3?V6c&fqZR3vx<|Tp8=);qitU9kyLt7=Ro&vd<rf*0>PhM<nIuD&+2VWSwDRo&i65Y30yfLs>'
+    '2&}Af!r{quYn|W!o&gH%`#u}PQ6f>H$wl(e?7Vd~?@s0}SKOM!ceyCXBI(#=#qPOQUiOs~XEjk#mwFj=5p`uc{oTMpS5^nJOR{&X'
+    'aBju1oy7(Gw*Aa{JaEC~I+Fx5+1~s!;QTU2zw@<L=hO}s_Bn0)y*bzvlXKe%<1J9HiQZPgQG+tyCV~GQrEr7xjv8c)&iqh}!8hFu'
+    'CdH_g*}zdF9w-4L!0&ciPiv`7C0FI(c<CTyqN^$*M3s32+lZViY>BRbK+REnoMyR#*E^BqznQSlt9RUGslBT%KsRHl0lM77un=A>'
+    'QBUF_-+!|W>)&@^o4@EbcC}kcQ3DPGX}#g11~R7h0_s>d@znGXwl1Q{2qJ65dJIg--C+2HmM9F+6$7=9Mqj`9xf5`*@i$ih*&9il'
+    'NHx_SZUkFjbg#b1&I{x8aD6s{hdospk9+XYzg?@;1cW>69jTEFj6n=<sTf`uoT+PsvXlx#sh&)gK7U4xLT%on)Nk;|%u!0_)yl9)'
+    '4N@LG5U<`>VG@^@+h2X<+apszOizL&1L0vBK{-4`ej}i>O6K9O!i(G|78%<T>wAm(y^TByHM?kL$z-yP(`Dj?0U}puI}omSqS~6~'
+    'i71AK&}=J<n<9(5`|99u|IO3G-Pf<sga7wgJfScG%ZJknQm~Rj1<o_R>fYH4^D>T{hdp^6T7g<^5xWp3#OwChU7N000&xiKNc7?_'
+    '|K|MlPydbL!l2PfRxQv+2#u)H&VZewPf8IuPqRFak0as{nS)L^jH1Ahhj<pDF9E)uhY84C81R5sa;DjweaM+7XX6jKYyc?<6UxEL'
+    'x#sf>B#aWRWpAFod9{NOSWprMw6A3;u&cNv0|z)fzAg`GZ5Y$FQ*+pg!rA=7!KmO#n1_=RbM65{|6uRMlczi1zkcy-XCGJEyZIBE'
+    '=`r2`2O=(n!vP&vfRRMLbQtY?QKH9&nUk;-0$ZJ}@md0X%ydAd9b`$(n69W+JtE*(LdT?;v6UE*NS7V$8zPSh&YU}>uE(_B+sYB~'
+    't*#k)n;ybwBLR1d>L>vi#j6!`CJ~We3R{6DT&QAQQ>3T7xBvR(-l4ch;ceRQ_vKX!G#`5XD@U5p_vl#s`2Fs|9&DQT^7Wy!_xjDg'
+    '13!FO&pbe)RnlmeoZ-dWV{Ti7C<umTUKQ~K4h4om#;lJPcLQ7JF7TBcn4upK2=X`!`?>?VvVdOGmbrUR_78V=oL^J;Dmk0T&}33P'
+    'n_wv9IjSr&14Q#UjoGs3ofmdbbzh9{c3$qj+8w`q{cPt2ufFGU1DNt2jz3_Y(q#;vdn*2hjOU!tauLQ;;Z-Rbd;0y8-B;u1`#U=r'
+    'kNDuhBmwc*`HotB7GD1QDl0=z>378VC?8X!0ZNK5#xsLvPUMIHXWFkZZGYq2R`3OX2YKhk>sQ~6f4}=|=k*w`Slaw*!?eP&G+X>F'
+    '^OW4i%ik?@A6b5DMGuhdJq;J0y};(O(mdbe+wo}(G*W8aOOe`23#Az8Nfu1cEr^`P>9PNK=#2ZL$KE7dT+_X>{`DLv`bl!>cvR}T'
+    'Dggd{$1HJ#3c2*y2`7}>EBH)*yk3M=5lwx(4**F`u-i<u;X-M3hnxFo>o=}~bUq^cI|p!#pYDuz{_*=KZw~OPdsX7rq#N!uymV{x'
+    '-HUQqyKB^5!`JI+7$=v;2nFI4fd<w|6Iqgk3765m@D?`H{hvmcEf+%zkbknbi#IE^+znkXP`e%)TJ2QR*i}W44odA}#6+GgS={UQ'
+    '`FcyCvhfkSVW}s(&Ou3OGjx#!u+Dzl4H9IoJI=D>BvPK<Q5wd#C&sbI&rS5H?rkAPW?3;NzBC78DDY+QlpgWw@i7`|;QxZnLQ#Ug'
+    '(e-sjz^VAie7IfnHL#}%TQ%0!l`l8^79mBdS><26%!77T=2U}c)Y1wyURyD@;fF-%n0(rS7(U%OIM{vlT}xKVretV1mVZ$bcIvBu'
+    '(1`=vo&~ncJ08gAPj+A6i6e$zkNOUi?3`fRO?qZ1fw#s8PTl&kzzA5rqFm^~4E51u){y1f@~pQYf9D&=Bo!SIb_{L-gQj%nzg(b7'
+    'xp2m1Q)xlt8JEF#QA$RHry1SK2!Ceru}B(Aes>k3{cR}u65s8sSHa7jXS+|vi1%K+K~`n_;`NVr&DPYi9Bt7$J?G(F0(M}W3k@!W'
+    '=n!6bV&e(VjQ#7k*|!w>GC2)$Ixb01H=Ie7NeWV2jcpjM-_ohz1B(UOf0*C=7|(gUYrvw0Z4&*d$kx5+$o9$rS|h<SyYSWqGCrNH'
+    'BK5hwRmCc;ZZ*ly6&aToUbc1ZKH7Lh2No;f+5z<#^99HDTlkqCQ<Nr<K=cun-|sPGSGvQ(0>=f&SHdzU%}|tr`HPN4^4u>r9$JH{'
+    '(#Bxu{YiX$BD9V2J+sIXuz%}3T;+A`;!lBAiYgZhbo2mlSkOd91;pA86{UeqA8y=Ji-|jOhiQJyn(LX|b;TJh1#ffj1*EeiL_2PS'
+    's>i4-(7~DaThA}I?zx^i%U473)xcpEodfiQLRl-RTa8pTZ;d8C$p!v>^I{2B3>}NaPrNo*$Uhj%CVpWaJ=S&&)Gv;3^JswLI_cRg'
+    'nozb`Zmg(XLoDWq{xnK?w#r2Fgv;OGNJCL9AVr^xd`YNO6Un&fnv2a&p0VE-)y_g`iWGXLnqk-U)s*~j-Br_3tw}8r-a6@9HeA{x'
+    'IW}YPiIJ+5%YMF1t`$Zc#V?XX%)D`kClVK9sccZUAKF>OOe?T&r6ZC6wXJqoZGf^6Z*?SIaajAw<!rk>D+vXv9jKU!0;8^k&G=~&'
+    'R)8ZsQy}p<(<=U!m5+hRpfsf9e~vmkVaul;@FG!EOO|-EDN3cP+4F+EawjD${4_4*Ri`Q$iV&!3*5|tAJ4;jUn)mePpC$0*A|V#}'
+    '|5^D{>IxYKpOY{~$JrshCJ%tQPIS^#gkYEsLcS>85n5AI=a9@QdJwtp;xeYVa-s5{pxS(D-Nm%R6n{S>w`u6^1Q^SrO?qf?5vgu9'
+    'xD4lsd$$xN9mhi=lkS8m?Uwbx*>A~=>@~9=Q(9jZQC+lilUlfNL<XU<Lgk^jgBMddV2UBmaRSwTjS_YltH6ufaFZCT#&i{6rQ1@t'
+    '+~N+<ba8FQjOw&C4J*x)S5IF2;a~^HVeW`r_F7`kw9q%ki+u^Ai$#c9{s#LhHWtd+iPb#wLSnO>uDp7p+m>3k#DlVhsbYsR{_0dW'
+    'Yrp-6e&14@Uu&~Ml;+VfjEQ2VuZ@d@`~7cF(|m<(pzGkB)7wZSPXQ^C#MYxx6eVDU4rS{kLVRHO1uRGE9g2fLMV2T_p$-%17P2y^'
+    'sk4`@o7Umh(lRHJ{T##bqX;8WF;b;{9<KPf^l!r{?R&t!Wjt!K9N~S*sP1=NzEsMbm&{*|Rt>3@Hxy~A2WjwnY-Tj4OK}W>D!H<@'
+    'r6PLJTq1$6rFGLrt}B`1R>}SR1aAh#U2W&;S6=QU=@|`m*l{VAafE8>QFi&P8N-C0)W4^9gTb8JB6#=c89vtNXA;gbKp}wVr?7!h'
+    'iq30OviucNba6bb^8ChmCW~R<&v&fZoMQ-``($qyaX3jf&bz93U%6rBY@!yK8|-29c#2sBFwga|h}h*(uXWFx7CD$CKnJ`Pr6l=Q'
+    'moIjTi?^?#lq7Fk!x>3^R}u{HqzMtQ;)MIKSU|_fA+k*k0Bn*LQAOwotrCUbB1<LO-W)B}l@RpCz7*oN#lu{zE8@IYAH3D;cgJ=6'
+    '_|q#o5Paudl3L$U`PG6Z1!FDlF!1hhaTW%k^JazBg>69?I5iW(UA?Vk9!n#%ey}R{Lv8fZkPk43N?nYQN0yB5>^1OzPsO#8Wut8l'
+    'Yj+&+o%jGwc!0kUQ~b}Q|As2y7ohMhaMYx$zZ6+jo3@I&qB+W~YiK5?t<g_nDH?@^exl<}SayI{_fZRqhJCD4R>o#(AWwX?xn=fX'
+    ';H1GO05yr@y<x)G?iDQE(!Wg%5-YTRCFiw-t!$qII)MLcDbg-zqWQHxb)*?odrCskEfS7#gp`=`TOpHuv$pDrAK?t%kt^Qx8E)3N'
+    '!|vBS=1gzP)sZ>u898qEi~OqNUbqflyvB$+{PG$mLo6y(KW%<`wE&ei7d>Nn@9(MCI`%fty&6p*%+@W~En<pz(0+6P%EG_S9v_d*'
+    '@O~EFeiW_Q8j5viG;h(sq{6U>FqgWg7OelPhM$$P$(xx^vFI*04fqu&x+I!mcmOS(N!*7q7MaLI!WR#rBO0(asC{5x{itLGMnNuW'
+    'b?-n-C^M(q#7Lcnii@Kpn*`(|g*Qe00=VhE^h)p#_or7{cBc#PeN*{;FE`NJ@nna)C&B^#{aiT%vU00!_O$kVSCnzBFKn04Ath4n'
+    'F48IUE&-oI?XKPD0xhZjL;VSh4$Wu}fG(VqC~B*5aY~$jnq4tCQEyY0n!_Iq{y>jUPMGs9lH4+dkSHO`@O~9N(pBO<2Cbo?NV5NO'
+    'I4A&Y>EJX!kkXj&Sj8b3!dKwzQ8FOGzU3m|3pH%X&A*&Q)(mKaw4aNT`FiNwy0>bcfBCad+FvMF<9;cVsXzmXxM0jua5w4^$AGo;'
+    'P?}dfTRB$D{2Xf%!nCfvww<V_#4Ri_$9dbNR_u+hQbiN<CEosQ7-H#BDE5^UiEtt%Nfa0nF%`m5n54?$mjIvL#KDwjI2JfwXsX0u'
+    'zX+pMU?6+pB%Z~HM7@o#1{)jBcP|fn&c<)>Cy4pq-h4<=Djg`H0(NpWYeNPC++Q?X$0=PsCt)|c`5$x>9my;q<@ve!5I6_1Goe>i'
+    'e#~pu4rc|Wy%Ki}#Doq@x@h^M;IGEcHDRzvy@X~;EZWFl0yJ^$m06irYBfBzcjN&WNWRmxjEV#TJY%1-xfqRm-8TXG$~k{Uew&zF'
+    'TaXu%CMNA}iKbum+H^^zTkNzu;-cr2zK(I-eRa6=>TtaG{r;1KodaJc(m8sE=31DY(HT@k2LjXcaAn8CQx)jUmsELFABo}XZ-2K#'
+    'UeO1>Ombj5P0}ch>!En&KidQ@Y!z%Ez%MQ4ftF<WZDs*kyUsgmbBJB`!L5n*>oJ*a$@Kx8xH%btoQLQ3)z{c|=grrBke;Qa%QZ18'
+    '0w>0ciYh@DXL#e+?Zn}^v=kF~%fu+Ob!H<ZfE0IYL?q)-k)o;~wJM8>Fjnpfp@~d3N#c1%jWbyq;q8p18Y~~2g~%{tSktP|S1pJR'
+    '5J}F$iXts25G4TsLrig$XXgMS>t%deW~XC$@ptg9KrA;qvfg-C@LxQIy@LO6FM84>TnwCH5Co&8_|LbK#oW;~V*=pVC{8b_JpPK2'
+    'Lzd<F*ljyM1o~VnbFoL6#o)N%Z7aC!c)BtF$`IPRIvqG0I>!h#v;;Dx!-zcC@}6_%>qQsm+4NE1xy!4ECkFOAlg<P3B6Vh!M~0s@'
+    'MUo)(Ka+qOPPrVr1aM75eREV@3QP1vcccapTWHj9QGm6<6ftcxwp<&n<~lC<s^L$8Ionb^9lgWr(i;~x@cliwBaP2-Nq3y^EZqU;'
+    'LZJtrfCW}(;4sv=dK~Z$r<N*|ocdy*CIU{E_FR*KT{tQGOWhog05>$DZPaq-8Rbz-+EPf0$PbYlkuFY0Z5zG=n4%3fz6<vfj#o0v'
+    'wJRDfhA!_iU&vfq4m0p3r92-kJ~Pdk%7Nx925S4jY?CGib_4%aJ<~ZOSDo2f-x;!?Hv&Gw`Tzd!|LecHb->iTBo^^d;i(yk4)~(b'
+    'CBE#sql9i1B+cbo6QD;O2>@F~KuV**zGc;XF-C6+3l-51L5hbir!XAd)l*CApQdGi;6*NcX?9K*p5-%q^xRMW(EnuK|76<#<oi!v'
+    'esUla6adRMiG=T}r-&23c5kCgE`u3E$XTsw2Z14vZ@Z}9lP$SSG+f(>Ru7VYAe4z;blC%l;zt?O!VEMxR1jk3_#hh-gB6d|<Qcl!'
+    '>xHKK=)}Ha4uqnA#XT(hQlmDX*5dVk<vcYiI9DFm2tcNf0UO0XMLbzCR16dlBM{>`j86}7cuOZCnMy0DP~US1g(#DQ%$!S+ndt5m'
+    'Vpt{c{sks?!i%n<R6+17UucL9=)}-Hv3zqC`btrKyplVQFQ7_%hIAhD-l78yh+{hxzsXQ{a`P`m#6uw8dS|LJWq{*+t@>hNhc4q9'
+    'IBV7+MBd?aNujbetjd_%Lae?DE0lX>YW{S5p=g`7P*mx>pvV$Ub_sW&#%=1tVgTC$ph=QjJ&&gIwPQks?HolNuV0<9!|H08#EMm}'
+    'cQO#z%p4K$Zs^MJHH&9F$K|~TBOHW{Jz{5M?=D*-v~>0kH4>~*ay7Yc<i)}Pm>^Hzd_Z3hS4v7pRh&%609GVGFfj@jbX(o?e2-s)'
+    '410{JyOi|q;=KS$MY`?22<c{n2)-hVPwYOr{qapIxt$jXAC244665Z@qB=r{-9->ir(;adO#K(6tlV}%jzZ2n0^vH3rULPDkuk;n'
+    'ZR;_MmFBy)sW~x4jMhzM_9OZLW2$if0B4ct)$y_4hvPXfI=@mdUmi!@C5Y<u=)i813;0QtEVkV=n;&t0W6LcRaDqs^<UQIDd9)*`'
+    '3c?hY4v>H>^*g(pR}}HdoiLutWCm|oXAt8{knvHafH69e4)Cr3=@d5~V8Kvjj|z80aAz^JovfH191ezy66aLw8Wke*h*TJA1Q>CC'
+    '^WQPn+55}Cp-wkTDD4E^?1zfO&Yl){Rh?*lEdh=OkLfI?gjFtQC_knvoKjez3FdT0{ji8d$FdRe{n7at1hFv|9s{GZ);Teb&l255'
+    'fCc8{)34j_u}+9b*4Ylmh=;f?;e?M(QD!+HP=I5#Sm8T#+06~wQaN1D@c?HfICKRA4*?s*bo~OQ7MR6<{nLNzUbO-hV0ods!k~PD'
+    'JJ?&)IU<c3IFv~MM8au?swHfhl#7_R%kh%XIm#-|Vw6Vlain@{IcU?km}F<2=joQirh@7ji@=H4_S|p^nAKn+EZ)NJYKlT@t%E0T'
+    '5P!7MRcD%C_VX%L01eM$es0;ku0}4&Mzd<SC+Lzw+YMCY=FcUncH_CY3=_G#?giqjc~&$oZ!8Y00x!>u3XP)+c`qw^iR&ZXhAlC{'
+    '-p8ZMTd?J2=Xbt0tP7HXm)BsdGG%D1dQSI(hKmxF)iBKonfRu82C}CYT?C3iBXb0tIV@hWehTRHEDTT;)qRM<V>lHn*L{s+9$^gZ'
+    '%UnnuH6^phH*#Qz=Fn<|S>kR!AQDr!qh%+!*^k)@b~622?^4T<fy$r$VyC~X7D<E&9uA+s-hX+}dD_ct(R$XmHdf36c~cA10KNLj'
+    '?fG&~?Q|?ayaX}D?Gv;n&*L*>4ml4T61<;Q?B*h#eALp!Q$#5#yePKa&pOxd{G@x+=(4YS;W3GJ<)U^jy~N756*L9HTgy)Mgg>{a'
+    'z9ja*N}N?h+d(b|mRj)Oq4RBgl*AcIOJt|AashIP|7F>qCW~&;uX2BKujHVELqgF@lmE5u!*!wgAggjj?tDhtms`(ZM>9;A$$zpN'
+    'U*g?9(X_pZ5DnpxFmxVOq%EGtvsp!nfV?O0U;pLH{_lRbiq^Bl{;{}8j>{6H2F~veUcYj@KV;Qmb%e2za2m<03b+#;Y}PVcR$$0I'
+    '1JU^Ae>iBzOerC$WUP?qyaZ+o+NKnIIbR%IBIk*@Y(j0=Lw>KSh0?d;y9gz^pM9)9Um-z+K%MGB&<Ykz+_dm9Ln5nQ3$AJD#<&RQ'
+    '7wo7h(1@FKBt~}yCev7(uGr}r7Z-}V413~=!%m`s*Mi*-C&J=qcjLcWE{(k__eDv6|7H}FR1UOIo$GRRsZk&^!e&C`6_Y2#%;}5?'
+    '(JEZoIbfCFe?_Y{85T9Vm(OyuzBf#Ee8R+_CbTL%V`l#K%rw93NicQQ4P;Y7Z|$jn;h*2E-9oyX%*~hGi=ZNt|Ar^?R#`*@qLL6|'
+    'DmiSDTu_W5>IzY8p>gBe&TfT6oQVM%LESy!{@e-T?Dn8WY6=k|=QTU$lFu2cN#ca{x!MiMmlvy*rKQAK0h+?N^E0{mmWJ_aypQB8'
+    '^-e$Tf_;ufGs>B3&jR^*n9~i<fZPZL<HcVtWx46zg9z>JDG_aj+>P|td}S?K6;873l>Hv%NZcelHY4a-*2H!`U%e=;RQ+QGuYMnu'
+    '%B$##ba7e8gxy(=DOZ)B2wq7?SqgP3)K$0A1;Qvb+#;Xu3GfS;vj7-C%s+!*?c#fJO_$sck)&r*WW|^hK&ZZ>i@5ZR4}lz@?7T<C'
+    'V9ICWqA;2Vs*XH-Y5Lk=?gm@i9MBJ3u!2ep?|?Zu2V7|d(tuoO<RhKvg8f?O*jRxMds05;m;3;46$d2R5Rdllef&+oK=>lcJJ1*N'
+    'n4YpaZ@u!jm5qoecrPzJ!?*N%+02uLQzffg7{Je-+JD~*tsA_Avqvp(Nd}ti?C<Zq*+<tJav0|9T$gz7HGrmZrHk6oEvs>loNtiX'
+    'enzQ$#bwoR(ioqNcm8etONSp~-1W5+owtO|@J0YbQxlmw9P*yiJ}hOFkl`)(h#Brh`8+OAo>{SsYmI4~VOSynY(jVA(wU=JFY;d^'
+    'oW$0AzAcR&#3k}BO>l;n3-%M5m+*oN*6u(0uDG?@^5d<Dln%BtP%T>eD_0M#?zOB5KOT&q?R@*@JGU(fS##hI{Rhy9?37}U#$!YV'
+    '<FWg{C_>Atbev?9FfmXXj@bAAf4HGlWd'
+)
+exec(compile(_z.decompress(_b.b85decode(_s)).decode('utf-8'), __file__, 'exec'))

@@ -1,261 +1,41 @@
-# -*- coding: utf-8 -*-
-"""Unit economics shared by the suite (ws.py start page, cs-intake, later cs-read).
-
-The question it answers: how much can one order cost in ads before this product loses money?
-Cash on delivery aware: Meta counts orders placed (the Purchase event fires on the order form),
-but money comes only from orders confirmed by phone and then delivered and paid.
-
-Rates (economics in product.yaml):
-  confirmation_rate  share of placed orders confirmed by phone            (1 when paid online)
-  delivery_rate      share of confirmed orders delivered and paid          (1 when paid online)
-  If the client only knows "35 % of orders are delivered", put confirmation_rate 1 and delivery_rate 0.35.
-Costs, in the product's currency:
-  unit_cost          one unit landed in stock (purchase + freight + customs)
-  shipping_cost      one delivery attempt; paid on delivered orders unless shipping_on: confirmed
-  return_cost        extra cost of a failed delivery (return trip), default 0
-  cod_fee_rate       share of the cash kept by the delivery company, default 0
-  call_cost          confirmation call per placed order, default 0
-  target_profit      profit wanted per delivered order (optional) -> target cost per order
-  ad_currency, fx_rate   the ad account's currency and how many product-currency units one unit of it costs
-
-A webinar (kinds.py) sells a seat at a free live, and the programme during or after it: compute_live() says what one
-sign-up may cost, from the programme's price (offers) and
-  show_rate          share of sign-ups who come to the live (or watch the replay in time)
-  sale_rate          share of those present who buy the programme
-  refund_rate        share of sales refunded, default 0
-  payment_fee_rate   share kept by the payment platform (card, mobile money), default 0
-  cost_per_sale      what one sale costs besides the ads (a closer's commission, a call), default 0
-  target_profit      profit wanted per sale (optional) -> target cost per sign-up
-"""
-import re
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import numparse  # noqa: E402
-
-DEFAULTS = {"shipping_on": "delivered", "return_cost": 0, "cod_fee_rate": 0, "call_cost": 0}
-LABELS = {"unit_cost": "coût d'une unité", "shipping_cost": "coût de livraison", "return_cost": "coût d'un retour",
-          "cod_fee_rate": "commission du livreur", "call_cost": "coût d'un appel de confirmation",
-          "confirmation_rate": "taux de confirmation", "delivery_rate": "taux de livraison",
-          "target_profit": "bénéfice visé", "fx_rate": "taux de change", "currency": "devise",
-          "ad_currency": "devise du compte pub", "shipping_on": "livraison payée sur",
-          "show_rate": "taux de présence au live", "sale_rate": "taux de vente parmi les présents",
-          "refund_rate": "taux de remboursement", "payment_fee_rate": "commission de paiement",
-          "cost_per_sale": "coût d'une vente hors pub"}
-
-
-def labels(keys):
-    return ", ".join(LABELS.get(k, k) for k in keys)
-
-
-class EcoError(Exception):
-    pass
-
-
-def num(v, what, allow_empty=True):
-    """A number typed by a person: 40000, "40 000", "5.000" (thousands), "0,5", "12 %" (see numparse.py)."""
-    if v is None or (isinstance(v, str) and not v.strip()):
-        if allow_empty:
-            return None
-        raise EcoError(f"{what} : valeur manquante")
-    if isinstance(v, bool):
-        raise EcoError(f"{what} : « {v} » n'est pas un nombre")
-    x = numparse.parse(v)
-    if x is None:
-        raise EcoError(f"{what} : « {v} » n'est pas un nombre")
-    return x
-
-
-def rate(v, what, default, allow_zero=False):
-    """0.8, "80", "80 %", "0,5 %" -> share between 0 and 1. A % sign always means percent."""
-    x = num(v, what)
-    if x is None:
-        return default
-    if numparse.has_percent(v) or 1 < x <= 100:
-        x = x / 100
-    if not (0 <= x <= 1) or (x == 0 and not allow_zero):
-        raise EcoError(f"{what} : {v} doit être entre 0 et 1 (ou un pourcentage)")
-    return x
-
-
-def inputs(eco):
-    eco = eco if isinstance(eco, dict) else {}
-    out = {
-        "unit_cost": num(eco.get("unit_cost"), "economics.unit_cost"),
-        "shipping_cost": num(eco.get("shipping_cost"), "economics.shipping_cost") or 0.0,
-        "return_cost": num(eco.get("return_cost"), "economics.return_cost") or 0.0,
-        "cod_fee_rate": rate(eco.get("cod_fee_rate"), "economics.cod_fee_rate", 0.0, allow_zero=True),
-        "call_cost": num(eco.get("call_cost"), "economics.call_cost") or 0.0,
-        "confirmation_rate": rate(eco.get("confirmation_rate"), "economics.confirmation_rate", 1.0),
-        "delivery_rate": rate(eco.get("delivery_rate"), "economics.delivery_rate", 1.0),
-        "target_profit": num(eco.get("target_profit"), "economics.target_profit"),
-        "shipping_on": eco.get("shipping_on") or "delivered",
-        "currency": eco.get("currency") or "",
-        "ad_currency": eco.get("ad_currency") or "",
-        "fx_rate": num(eco.get("fx_rate"), "economics.fx_rate"),
-        "assumed": list(eco.get("assumed") or []),
-    }
-    if out["fx_rate"] is not None and out["fx_rate"] <= 0:
-        raise EcoError(f"economics.fx_rate : {eco.get('fx_rate')} doit être positif")
-    if out["shipping_on"] not in ("delivered", "confirmed"):
-        raise EcoError(f"economics.shipping_on : « {out['shipping_on']} » inconnu (delivered, confirmed)")
-    return out
-
-
-def compute(price, eco, qty=1):
-    """Economics of one order of `qty` units sold at `price`. Returns a dict, or raises EcoError."""
-    p = num(price, "prix", allow_empty=False)
-    e = inputs(eco)
-    if e["unit_cost"] is None:
-        raise EcoError("economics.unit_cost : le coût d'une unité manque")
-    q = int(qty or 1)
-    conf, deliv = e["confirmation_rate"], e["delivery_rate"]
-    d = conf * deliv
-    revenue = d * p
-    cogs = d * e["unit_cost"] * q
-    ship = (conf if e["shipping_on"] == "confirmed" else d) * e["shipping_cost"]
-    returns = conf * (1 - deliv) * e["return_cost"]
-    fee = d * p * e["cod_fee_rate"]
-    margin_placed = revenue - cogs - ship - returns - fee - e["call_cost"]
-    r = {"price": p, "qty": q, "currency": e["currency"], "paid_share": d,
-         "margin_delivered": margin_placed / d if d else 0.0,
-         "breakeven_cpa": margin_placed,                   # ad cost per order placed, at break-even
-         "breakeven_roas": (p / margin_placed) if margin_placed > 0 else None,
-         "target_cpa": None, "kill_spend": None, "viable": margin_placed > 0}
-    if e["target_profit"] is not None:
-        r["target_cpa"] = margin_placed - e["target_profit"] * d
-        r["target_unreachable"] = r["target_cpa"] <= 0   # the cut-off then falls back on break-even
-    ref = r["target_cpa"] if (r["target_cpa"] or 0) > 0 else margin_placed
-    r["kill_spend"] = 2 * ref if ref > 0 else None
-    if e["ad_currency"] and e["fx_rate"]:
-        fx = e["fx_rate"]
-        r["ad"] = {"currency": e["ad_currency"], "breakeven_cpa": margin_placed / fx,
-                   "target_cpa": (r["target_cpa"] / fx) if r["target_cpa"] is not None else None,
-                   "kill_spend": (r["kill_spend"] / fx) if r["kill_spend"] else None}
-    return r
-
-
-def live_inputs(eco):
-    eco = eco if isinstance(eco, dict) else {}
-    out = {
-        "show_rate": rate(eco.get("show_rate"), "economics.show_rate", None),
-        "sale_rate": rate(eco.get("sale_rate"), "economics.sale_rate", None),
-        "refund_rate": rate(eco.get("refund_rate"), "economics.refund_rate", 0.0, allow_zero=True),
-        "payment_fee_rate": rate(eco.get("payment_fee_rate"), "economics.payment_fee_rate", 0.0, allow_zero=True),
-        "cost_per_sale": num(eco.get("cost_per_sale"), "economics.cost_per_sale") or 0.0,
-        "target_profit": num(eco.get("target_profit"), "economics.target_profit"),
-        "currency": eco.get("currency") or "", "ad_currency": eco.get("ad_currency") or "",
-        "fx_rate": num(eco.get("fx_rate"), "economics.fx_rate"), "assumed": list(eco.get("assumed") or []),
-    }
-    if out["fx_rate"] is not None and out["fx_rate"] <= 0:
-        raise EcoError(f"economics.fx_rate : {eco.get('fx_rate')} doit être positif")
-    return out
-
-
-def compute_live(price, eco):
-    """A webinar: what one sign-up may cost in ads, sold on the programme at `price`. Returns a dict, or raises."""
-    p = num(price, "prix du programme", allow_empty=False)
-    e = live_inputs(eco)
-    missing = [k for k in ("show_rate", "sale_rate") if e[k] is None]
-    if missing:
-        raise EcoError("il manque " + labels(missing) + " (economics." + ", economics.".join(missing) + ")")
-    buyers = e["show_rate"] * e["sale_rate"]                       # sales per sign-up
-    net = p * (1 - e["refund_rate"]) * (1 - e["payment_fee_rate"]) - e["cost_per_sale"]
-    cpl = buyers * net                                             # break-even ad cost per sign-up
-    r = {"price": p, "currency": e["currency"], "buyers_per_signup": buyers, "net_per_sale": net,
-         "signups_per_sale": (1 / buyers) if buyers else None,
-         "breakeven_cpl": cpl, "breakeven_per_attendee": cpl / e["show_rate"], "breakeven_cps": net,
-         "breakeven_roas": (p / net) if net > 0 else None,
-         "target_cpl": None, "kill_spend": None, "viable": net > 0}
-    if e["target_profit"] is not None:
-        r["target_cpl"] = buyers * (net - e["target_profit"])
-        r["target_unreachable"] = r["target_cpl"] <= 0
-    ref = r["target_cpl"] if (r["target_cpl"] or 0) > 0 else cpl
-    r["kill_spend"] = 2 * ref if ref > 0 else None
-    if e["ad_currency"] and e["fx_rate"]:
-        fx = e["fx_rate"]
-        r["ad"] = {"currency": e["ad_currency"], "breakeven_cpl": cpl / fx,
-                   "target_cpl": (r["target_cpl"] / fx) if r["target_cpl"] is not None else None,
-                   "kill_spend": (r["kill_spend"] / fx) if r["kill_spend"] else None}
-    return r
-
-
-def offer_lines(product):
-    """(label, price, qty, currency, market) for the main offer and each bundle of every market."""
-    out = []
-    for o in product.get("offers") or []:
-        if not isinstance(o, dict) or o.get("price") in (None, ""):
-            continue
-        m = o.get("market", "")
-        q0 = int(num(o.get("qty"), "offers.qty") or 1)   # a pack sold as the product: its units cost each
-        out.append((f"{m} {'1 unité' if q0 == 1 else f'lot de {q0}'}".strip(), o["price"], q0, o.get("currency", ""), m))
-        for b in o.get("bundles") or []:
-            if isinstance(b, dict) and b.get("price") not in (None, ""):
-                q = int(num(b.get("qty"), "bundles.qty") or 1)
-                label = b.get("label") or f"lot de {q}"
-                out.append((f"{m} {label}".strip(), b["price"], q, o.get("currency", ""), m))
-    return out
-
-
-def fmt(v, cur=""):
-    if v is None or v == "":
-        return "—"
-    if not isinstance(v, (int, float)):
-        x = numparse.parse(v)
-        if x is None:
-            return f"{v} {cur}".strip()
-        v = x
-    s = f"{v:,.0f}" if abs(v) >= 100 or float(v).is_integer() else f"{v:,.2f}"
-    s = s.replace(",", " ").replace(".", ",").replace(" ", " ")
-    return (s + (f" {cur}" if cur else "")).strip()
-
-
-def dec(v, n=2):
-    return "—" if v is None else f"{v:.{n}f}".replace(".", ",")
-
-
-def one_line(product, kind=None):
-    """The start page's sentence, or None when the costs are not known yet."""
-    eco = product.get("economics") if isinstance(product.get("economics"), dict) else {}
-    lines = offer_lines(product)
-    if kind == "webinar" or (kind is None and eco.get("show_rate") not in (None, "")):
-        if not lines or eco.get("show_rate") in (None, "") or eco.get("sale_rate") in (None, ""):
-            return None
-        try:
-            r = compute_live(lines[0][1], eco)
-        except EcoError as ex:
-            return f"à calculer : {ex}"
-        cur = eco.get("currency") or lines[0][3]
-        e = live_inputs(eco)
-        s = (f"{fmt(r['breakeven_cpl'], cur)} de pub au maximum par inscription (programme à {fmt(r['price'])}, "
-             f"{e['show_rate']:.0%} de présents, {e['sale_rate']:.0%} d'acheteurs parmi eux)")
-        if r.get("ad"):
-            s += f", soit {fmt(r['ad']['breakeven_cpl'], r['ad']['currency'])}"
-        if not r["viable"]:
-            s = "aucune marge : chaque vente perd de l'argent avant même la pub"
-        if e["assumed"]:
-            s += " — hypothèses : " + labels(e["assumed"])
-        return s
-    if not lines or eco.get("unit_cost") in (None, ""):  # 0 is a real cost: a digital product has none per sale
-        return None
-    label, price, qty, cur, _ = lines[0]
-    if eco.get("currency") and cur and eco["currency"] != cur:
-        return f"à calculer : le prix est en {cur} et les coûts en {eco['currency']}"
-    try:
-        r = compute(price, eco, qty)
-    except EcoError as ex:
-        return f"à calculer : {ex}"
-    cur = eco.get("currency") or cur
-    s = (f"{fmt(r['breakeven_cpa'], cur)} de pub au maximum par commande passée "
-         f"(prix {fmt(r['price'])}, {r['paid_share']:.0%} des commandes payées au final)")
-    if r.get("ad"):
-        s += f", soit {fmt(r['ad']['breakeven_cpa'], r['ad']['currency'])}"
-    if not r["viable"]:
-        s = f"aucune marge : chaque commande perd {fmt(-r['breakeven_cpa'], cur)} avant même la pub"
-    if inputs(eco)["assumed"]:
-        s += " — hypothèses : " + labels(inputs(eco)["assumed"])
-    if kind == "digital":
-        import kinds
-        s = kinds.say({"kind": "digital"}, s)
-    return s
+# Creative Strategy OS, sous licence. Usage personnel, non transférable.
+import base64 as _b, zlib as _z
+_s = (
+    'c-rk+&5q-^5x)B=7z2T%iQ4O)+#1^pY>?U0APA7nsbd(lM0GQ*za}M*I}HQ-5P5(c)0;=w+xkuNB&i}Pilk)s1Q`SfkU8|&RmEbl'
+    'SU(?0^Qvt`M+94N{YgH{MIoAsw6uFD`HmR+@8RnLm@A~OcrBUe;&n=7Ct~Eq+ik&1w%sNx!DLhJS)72ZV0D)ygYvqsfF#-Cw;#Uy'
+    '_KzRG{{y)tFOhuUZOiNXZBs`#B+6OI_e`)nN=YPG*Nb|aHL?R9%ok-%zAYHr3fi%OM9b2O92XzI{mqAuT6JIZZs07l=JZoXav(B-'
+    'jMM892HV+<SY*T)0W$>U60DjS;^+e3bxkjpQ`6vkRdFeKQ<J<`>R2zLz+hJuZCh62)LBy(TvW7!v0C%^-Ky_se+Y$9yK&(2M9^DM'
+    'N5wtswykIiuGYOfz1FAKf@h5Exjen1P;r>f_CV`<rdH7l*xu|}ZyJnIRGM$63|v2WqwN@J`(5O^U2nQI4dU+k^va0To{|sEr-=!z'
+    'IK4`kfDx+Ps^*onWE06fgdfOLQE^f-IgIS2-qND4^T`;&svT^oWEBXa99V=O&u%SFz^ycH>$YWLiw1>Zr|o%YghW3qkBddl3R2P?'
+    'D`ou1o@H{gAn;E|8$o@mKR3LNV;$5h*s}OBC65Uy8bKZjuZbF#EEZWwr6eD+=7SK8h(8=M)?!E)l`U}fbdZJdJ|&+XXqOU*MDQ?!'
+    't$DuvUi8dJ^MdRNm*jU1SPe79Ttd!w6r7G@A?p)D>zu@O(~<oOzVkLt5;NLpaCDD!XL+dH(sBFQXnqmBpn*qnL-ydvUXY5`Pdx?y'
+    'Maf{IZ`7`7O2>du;nFJn`5)wEe<VNuMCypi4qXEUfz(a46KtuqAE15=<!Yt=#(O*OVQ|ftn$0-mpf?DEY}_HB(7v==^%o|Z+wW*8'
+    'hpjS}4g)S4si!d-2SK~c2P!dgGYC>xEN=TX`5N?meM_#_>roBPcpzUP(dvLOSfikpRv`mow?MREGTNV9*rsvc(QA3bJ97H56O4dW'
+    '@OMpE2m0ftM<=$BsAw*|XGt{YN?x~pCu5d1W=i-3*5hA4et-h5=2@2z$VEn8j!L}gyGbKKXM?!PMTe0<vH}_Qm1lD0)59j?sqmS;'
+    'nt+FXU9Z-Ye&p$MS-v)pGwKTZmI^<s&13rNJXWfeIYFw*Nzm;)Lq|rScci;UPFrATX($nz8}d_fy;>(TEz?)*bA6>g&ngVNtG8~S'
+    '>Fb;F{7yNI8Xzk-`M}BP!J~r)nwFn-Yb)uJN8u3-c*_~c{z6<Tw4S~KyKbOc%WfPw(A5-oo8&l@6G*!|t9OHi3=4>AMp#Y)HdLJT'
+    'g-SfJ32V#Ldau~DjpQ9KmWgMP>+_8=3HomwI9^8?uIjUFa&($zF`Y_v4_?EVx+k%nE+uxd#BU^^Lf1b8T|LBdD*)G}L{+&bX!X|v'
+    'DlpB%@FV#D5c#M;_ZnS1LE5RPgKyZKQwBG0_QvH*m4v02h-5>AuDkxwCZE*&T?{Kw-APkp^aA!ta7zLbG1xQB^-YR)`supS3UU~P'
+    '1IRnA#CQ_GT8}Hvf!-=w*4#@&2-f_LJShp>HZ(!0)2{J@23n#MBD&Y)iB{+r`;D`qa<nkMCRf8+)hM^9>oHK12eY+^SE#j21$Bnk'
+    '+qR?`!}Sl#z0!-k(kr>L^Is{gS4x{L&&EX6AyouHhPMz!us`tWDJVmC<F}21)jZ$I2RI@E6Jj|sCXLy26Il5btO<OYYp?0H02qos'
+    'qV3zPrQryVFB&S*K2YPU1(iPG8$=m61%~lh%=H9@_Q=5rvSoEX()OJ06y~3(J36W2S9q_uIVp4J&I(}@=)9WK1mQcQps&FNaB4%-'
+    'P*JEFtEUOIVulSy#~}@yax%KfGi_mJcN~PXz6a}Y0#Jwlc`kOG<2Ig+s`bpN^rL?Y#Go$AT{zWKz68<d>3%D8AWDiuxc8wSP)4mN'
+    '^qJGI+(7bzCiIb`%%fWcN4LTYb997M*?uXI>mIg!1T=C&cskHiWnvN>!~-ps6KJvYQHy^#_w~5E5a5oS^MG{bK<`g55%6c3urFZW'
+    ';5NX=zaBFLs~&H}!Cw$r{vRWLL5z3?d2KO69r$$tci|-&?9RQQRmCoYurTd)OUDbT`X1PKkK^@_o4j6jCc5N4TEMm$JZlu4byvho'
+    'gUd)nel=WQnNbN)A`*`dMUhCYeIV#7EmwXxyzlyFCZsOyquCn+kF4q1(wbq}Y6ncDpwO89o5W#EG8VWR%Xn#~^=54edW|XXaGEnP'
+    '=K{FVqqSy!U-vD@Xc{nU=GO$);l?O2=`yaNCm1teSIj53pST^YgaPo^qoOX_b<jr`(`?Y_yEf1wtv$2A30;o2J@DUIkW_vqNHR+P'
+    'BWP5rMsK$&MxAreDET*WQF$2`l{2`goZ=!N{%@k8(gur<fyw{_m1i(e`Cr9AO;JFcm%L^Y>S>erfNyRbU~^|qMX);!RzxGCOS>8@'
+    'hwkECU#s)|2%ao-LOlj2sA7<)GHaISp8EBXvF<n=tSqqti_CBUoR3UB8bo7&KCR6m7u$mo#PbyPNNwy&eRU4NW~nQDKC1H=FQ2O;'
+    'd5NQIbBc~|Ij9(~W|c3CsBF|D*UQuT2z_liT;Zprxijm6sCWXz5ds5cZc3_ToE%-dLoXQF9aQ0x&3JWsZ@(M7iqXCE-8x*boN=vt'
+    'BY@7@`OY#%%zA71r&<?Q5It0V)xwU0j?rYC=j}*&Ta7(NqaSy!AK!Fi2p@{7!yA1NzqJbwA7%FHHX)ka???aq;jhtRK8itS3=T_4'
+    'Q8u)5FXGR?c$|Mwa3%#e?7<CS@aP09x5pO)eL(`BQ1m8Ut&5`yOuCc!-0+QhWl+9H(}1+%5<pJJ?wN>_A#T;s_l4OMREMx%9oph3'
+    'MYsN`f4_cTM9D~AAvtv^Mh3{le>aFF;1SqUvl6rqKIq9|BNDqbwM#k6(4+P3`{3aYcfjAT(frj*eFXcb=9zL<GgZunT9%SWUgx*!'
+    'VB{X}yfS9dm4<cBhMyCgI|!;8iuGxxq7Lzd#;Caa#CE)<B2sTXiaIP+HL97T<20d@Nx{`7fXZ0~-e6zK#kJ>a#@x$eC&K4Rb=&5^'
+    'cV*PwdUJQZ(IDQ6Gxf@9p)sKV&<<zv<McO@(K72xCe-QT;1m{&vD<T}FgyLP$Hsp46kwBV`GPeBI;r2;H>#-MNk+ZJ;}d#C54`H}'
+    'Cm#ZQCo>3eyf-DWJ&h2seNbnLT5?Qb4IY-fS*?G0bROtCX+%cgZbTvgUaVt1zJsgBdDb72r5g)kIAn%92>FSNONqpj*kBZboSBtc'
+    '&Iom&*M%_$QU;Z7!ntnAlJ*(iN8{}fo(cgm;=#xKvVe(P{jwrLZru^Or|`Er{RloQse0shXG7d&&a<1DWkm$)26=dHo9^NCcL|Ab'
+    '<DRhG(MeeJ<>F!%Iq#9@@*~WRSWTM}b4G<eszN6v+e8JQ4oVAGXJQu%0Y<iZ0tNwhAIL9mRUl60FP46ylo(HNI>xtiR_nTqkHGkQ'
+    '4)tIl6**9EcG=5qC$GZ?5p%S@oXu}$^2IEMZ;Q*xN#9CN{M8BglBpka;ICw2<(aw6#INH8yG>1Lbx89|8;O$?P{~V^faj9$a}$rg'
+    'k$9JqPWxs)<Hp5f(y95c&O7j2B69CH0ki4&IjK0WW7;Hhe$P8vIvCCT6b>b%w{AsQN%|bWMEF_#ddduk9hDwTk^cfNG^f='
+)
+exec(compile(_z.decompress(_b.b85decode(_s)).decode('utf-8'), __file__, 'exec'))

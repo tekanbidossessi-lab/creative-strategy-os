@@ -1,6 +1,6 @@
 # Creative Strategy OS — le guide d'utilisation
 
-*Version 1.7.2 · pour Windows et Mac*
+*Version 1.8.0 · pour Windows et Mac*
 
 ## Ce que fait Creative Strategy OS
 
@@ -57,14 +57,14 @@ Ensuite, chaque fois que tu reviens, tu écris « On continue ». Claude reprend
 
 1. **L'app Claude.** Télécharge-la sur claude.ai/download, installe-la, connecte-toi et ouvre l'onglet **Code** une fois.
 2. **Le plugin.** Dans l'app : Paramètres, Plugins, « Ajouter une marketplace », colle `https://github.com/tekanbidossessi-lab/creative-strategy-os.git` (le lien entier, avec `https://` et `.git` : la forme courte échoue sur beaucoup de PC Windows), puis installe **creative-strategy-os**. Ferme et rouvre l'app.
-3. **Une session sur ton ordinateur, pas dans le cloud.** Dans l'onglet Code, quand tu ouvres une nouvelle session, l'app te laisse choisir où elle tourne. Choisis **ton ordinateur (« Local »)** et ton dossier de travail. Une session dans le cloud tourne sur une machine temporaire, loin de chez toi : tes fichiers n'arrivent pas sur ton disque, Claude ne peut pas ouvrir ton Chrome, et tout peut disparaître quand la session s'arrête. Si une commande de la suite affiche « ATTENTION : tu travailles sur une machine temporaire dans le cloud », ferme cette session et ouvre-en une nouvelle sur ton ordinateur. Ce que la session cloud a déjà fait, demande-le à Claude en zip avant de la fermer, et décompresse-le dans ton dossier de travail.
+3. **Une session sur ton ordinateur, pas dans le cloud.** Dans l'onglet Code, quand tu ouvres une nouvelle session, l'app te laisse choisir où elle tourne. Choisis **ton ordinateur (« Local »)** et ton dossier de travail. La suite ne marche pas dans une session cloud : elle tourne sur une machine temporaire, loin de tes fichiers et de ton Chrome, et tout peut y disparaître. Si une commande dit « la suite ne marche pas dans une session cloud », ouvre une nouvelle session sur ton ordinateur : ta licence n'a pas été entamée. Ce que la session cloud a déjà fait, demande-le à Claude en zip avant de la fermer, et décompresse-le dans ton dossier de travail.
 4. **Ta clé.** Crée un dossier pour ton travail, ouvre-le dans l'onglet Code et écris : « je veux des pubs qui vendent pour mon produit ». Claude te demande ta clé de licence (dans l'e-mail de Chariow) : colle-la. Elle vaut pour 2 ordinateurs, à vie.
 5. **Les outils.** Écris : « installe les outils de Creative Strategy OS ». Claude lance le script d'installation du plugin (Python, Chrome, LibreOffice si tu n'as pas Word, les outils de la suite), comme l'étape 4 ci-dessous, puis vérifie tout avec toi.
 6. **Claude dans Chrome** et **la clé Gemini gratuite** : étapes 5 et 6 ci-dessous.
 
 Les mises à jour arrivent toutes seules : à ta première commande, le plugin active les mises à jour automatiques de Claude et te le dit en une ligne. Chaque commande commence par le nom de ta version (« Creative Strategy OS 1.4.7 »). Rien à réinstaller.
 
-**La version d'essai (7 jours).** Avec une clé d'essai, tu fais un produit jusqu'aux briefs : l'entrée, l'offre, la recherche (20 références), la stratégie et 5 briefs. Chaque document porte « Version d'essai » en haut. Le contrôle des vidéos, le lancement, la lecture des résultats et les variations sont dans la licence complète. L'essai vaut pour un ordinateur.
+**La version d'essai (7 jours).** Avec une clé d'essai, tu fais **un produit, un document** : ta stratégie créative complète jusqu'aux briefs (20 références, 5 briefs), marquée « Version d'essai » sur chaque page. Le contrôle des vidéos, le lancement, la lecture des résultats, les variations et tes autres produits sont dans la licence complète. L'essai vaut pour un ordinateur. Connexion internet nécessaire : la clé est vérifiée pendant le travail.
 
 ### Tu as reçu le fichier zip (installation à la main)
 
@@ -484,7 +484,7 @@ Sur Mac, la même ligne avec `python3`, `~/.claude/skills/...` et `~/Downloads/.
 
 | Ce que tu vois | Ce que tu fais |
 |---|---|
-| « ATTENTION : tu travailles sur une machine temporaire dans le cloud » | Ta session tourne dans le cloud, pas sur ton PC (Installer, étape 3). Demande à Claude un zip de ton dossier, ouvre une nouvelle session sur ton ordinateur (« Local »), décompresse le zip dans ton dossier de travail, puis dis « on continue » |
+| « la suite ne marche pas dans une session cloud » | Ta session tourne dans le cloud, pas sur ton PC (Installer, étape 3). S'il y a déjà du travail, demande à Claude un zip de ton dossier ; ouvre une nouvelle session sur ton ordinateur (« Local »), décompresse le zip dans ton dossier de travail, puis dis « on continue » |
 | « LICENCE : … » | Claude s'arrête, c'est normal : ton travail est sauvegardé. Écris à Richie sur WhatsApp avec le message exact ; dès que c'est réglé, dis « on continue » et la suite reprend où elle s'était arrêtée |
 | Claude ne semble pas connaître la suite | Vérifie que les dix dossiers sont directement dans `.claude\skills` (Installer, étape 3), ferme complètement l'app Claude, rouvre-la, puis utilise l'onglet **Code** |
 | « python n'est pas reconnu » dans PowerShell | Ferme PowerShell, ouvre-en un nouveau, relance le script d'installation |

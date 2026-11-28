@@ -1,5 +1,13 @@
 # Journal des versions — Creative Strategy OS
 
+## 1.9.0 — 2026-11-28
+
+- 1.9.0 : mise à jour obligatoire, fichiers vidéo vus par le serveur, captures obligatoires dans les briefs, budget par semaine, essai verrouillé, étude du marché obligatoire, formats choisis par la recherche, code protégé, rapports d'amélioration
+
+## 1.8.0 — 2026-11-24
+
+- 1.8.0 « Pas de passager clandestin » : les documents Word se construisent sur le serveur (sans clé valable, pas de livre) ; chaque commande locale vérifie la clé ; les instructions des étapes sont servies avec la clé ; sessions cloud refusées avant d'entamer la licence ; essai : un produit, un ordinateur, un document marqué sur chaque page avec une page de fin vers la licence ; une place n'est plus prise quand Chariow ne répond pas ; alerte quand une clé semble partagée ; pannes locales envoyées (avec le oui) et gardées hors ligne ; ws.py step research done respecte la règle TikTok
+
 ## 1.7.3 — 2026-11-24
 
 - 1.7.3 « Ce qu'on dit sur TikTok » : TikTok sert à entendre ce que les gens disent du produit, du problème et de la solution ; lire les commentaires de la moitié des TikTok retenus (40 au moins) devient obligatoire (refs_intent en rouge) ; research.py report --done refuse de clore sans les TikTok ni leurs commentaires (sauf « sans objet » posé à la main, avec les recherches essayées) ; nouvelle section « Ce que les gens disent » dans RECHERCHE.md (demandes d'achat, doutes, le problème raconté, tels qu'écrits) ; le plan prévient quand TikTok a moins de 4 mots (le problème dans les mots des gens, la solution, le produit)

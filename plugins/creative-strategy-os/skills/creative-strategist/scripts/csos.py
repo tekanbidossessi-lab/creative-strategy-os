@@ -19,8 +19,16 @@ import csos_client as C  # noqa: E402
 
 
 def main(argv):
+    for st in (sys.stdout, sys.stderr):
+        try:
+            st.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     if len(argv) >= 2 and argv[0] == "licence":
         if argv[1] == "set" and len(argv) >= 3:
+            if C.in_cloud():
+                print(f"LICENCE : {C.CLOUD_TEXT}")
+                return 4
             conf = C.load_conf()
             conf["key"] = argv[2].strip()
             C.save_conf(conf)

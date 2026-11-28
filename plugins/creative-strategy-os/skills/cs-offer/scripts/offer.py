@@ -1,144 +1,37 @@
-"""offer.py — the offer step of the creative-strategy suite: the market, the offer, the page, the ad text, the follow-up.
-
-    python offer.py competitor <dossier> <adresse | sonde.json> [--name N] [--qty 2] [--market CI]
-                               [--adlib adlib.json] [--ads ID,ID] [--code CO01]
-    python offer.py compare    <dossier> [--fx XOF=14.3 ...] [--market GN]
-    python offer.py init       <dossier>                    écrit library/offer.yaml à remplir
-    python offer.py plan       <dossier>                    vérifie et chiffre l'offre proposée
-    python offer.py simulate   <dossier> --offer 2:385000[:libellé] ... [--cpa 2.5]
-    python offer.py lint       <dossier> <texte.md> [--offer proposed|current]
-    python offer.py check      <dossier> [<id> <ok|warn|fail|todo|na> --evidence "…"]
-    python offer.py report     <dossier> [--done]
-
-Files (creative-strategist/references/workspace.md): library/competitors.yaml and library/competitors/CO##_<nom>/,
-library/offer.yaml (the proposed offer and the page brief), deliverables/texte-pub.md, deliverables/messages.md,
-deliverables/OFFRE.md, audit.yaml (checks, shared with the intake). Nothing is blocked.
-
-Édition sous licence : seules les commandes page-paste tournent ici ; les autres partent sur le serveur de licence."""
-import json
-import os
-import re
-import sys
-from pathlib import Path
-HERE = Path(__file__).resolve().parent
-SUITE = HERE.parent.parent / 'creative-strategist' / 'scripts'
-if not (SUITE / 'ws.py').exists():
-    print(f'ERREUR : le skill creative-strategist doit être installé à côté de cs-offer (attendu : {SUITE}).', file=sys.stderr)
-    sys.exit(2)
-sys.path.insert(0, str(SUITE))
-import ws as W
-import economics as E
-import pagefacts as PF
-from audit import Audit, STATUSES, ICON, STATUS_FR
-from ws import WsError, open_ws, load_yaml, dump_yaml, journal, refresh, today, read_text
-
-def slug(s):
-    s = re.sub('[^\\w]+', '-', PF.unescape_json_text(str(s or '')).lower(), flags=re.U).strip('-')
-    return s[:40] or 'concurrent'
-
-def cmd_page_paste(a):
-    """Save the page copied by browser/page_grab.js (SAUVERPAGE): the clipboard is on the user's computer."""
-    (P, ws, state) = open_ws(a.folder)
-    import subprocess
-    if sys.platform == 'win32':
-        cmd = ['powershell', '-NoProfile', '-Command', '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Raw']
-    elif sys.platform == 'darwin':
-        cmd = ['pbpaste']
-    else:
-        cmd = ['xclip', '-selection', 'clipboard', '-o']
-    body = subprocess.run(cmd, capture_output=True).stdout.decode('utf-8', 'replace').replace('\r\n', '\n')
-    if not body.startswith('# '):
-        raise WsError('le presse-papier ne contient pas une page : lance browser/page_grab.js sur la page, clique sur SAUVERPAGE (un vrai clic), puis relance offer.py page-paste')
-    name = slug(a.name or body.splitlines()[0][2:]) or 'page'
-    out_dir = P['root'] / 'library' / 'competitors' / 'pages'
-    out_dir.mkdir(parents=True, exist_ok=True)
-    dest = out_dir / f'{name}.md'
-    dest.write_text(body, encoding='utf-8')
-    journal(P, f"Page enregistrée depuis le navigateur : {dest.relative_to(P['root'])}")
-    print(f"Page enregistrée : {dest.relative_to(P['root'])} ({len(body)} caractères). Suite : offer.py page write")
-
-def build_parser():
-    ap = W.FrParser(prog='offer.py', description="L'offre : le marché, l'offre, la page, le texte, la relance.")
-    sub = ap.add_subparsers(dest='cmd', required=True, parser_class=W.FrParser)
-    p = sub.add_parser('competitor', help="lire la page d'un concurrent")
-    p.add_argument('folder')
-    p.add_argument('source')
-    p.add_argument('--name')
-    p.add_argument('--qty', type=int, help='quand la page vend un lot comme un produit à part (2, 3…)')
-    p.add_argument('--unit', help="ce qu'une unité contient : paire, pièce, 30 jours de cure… (pour comparer juste)")
-    p.add_argument('--force', action='store_true', help='ajouter la page même si elle ne parle pas du produit')
-    p.add_argument('--market')
-    p.add_argument('--adlib', help='le JSON de browser/adlib_links.js')
-    p.add_argument('--ads', help='identifiants de pubs de la Bibliothèque, séparés par des virgules')
-    p.add_argument('--code')
-    p = sub.add_parser('page', help="lire une page (grab), l'écrire comme un brief (write), la contrôler (check)")
-    p.add_argument('action', choices=('grab', 'write', 'check'))
-    p.add_argument('folder')
-    p.add_argument('url', nargs='?')
-    p.add_argument('--name', help='le nom du fichier (ex. frank-simo-atelier)')
-    p.add_argument('--clipboard', action='store_true', help='enregistrer la page copiée par browser/page_grab.js')
-    p.add_argument('--plan', help='A vente après un live · B vente froide · C inscription webinaire/défi · D produit COD')
-    p.add_argument('--ref', help='la page de référence (library/competitors/pages/<nom>.md)')
-    p.add_argument('--force', action='store_true')
-    p = sub.add_parser('page-paste', help='enregistrer la page copiée par browser/page_grab.js (presse-papier)')
-    p.add_argument('folder')
-    p.add_argument('--name')
-    p = sub.add_parser('compare', help="le marché face à l'offre du client")
-    p.add_argument('folder')
-    p.add_argument('--fx', nargs='+', metavar='DEVISE=taux')
-    p.add_argument('--market')
-    p = sub.add_parser('init', help='écrire library/offer.yaml à remplir')
-    p.add_argument('folder')
-    p = sub.add_parser('plan', help="vérifier et chiffrer l'offre proposée")
-    p.add_argument('folder')
-    p = sub.add_parser('simulate', help='comparer des offres (prix, lots)')
-    p.add_argument('folder')
-    p.add_argument('--offer', nargs='+', action='extend', metavar='qté:prix[:libellé]')
-    p.add_argument('--set', nargs='+', metavar='clé=valeur', help='change un taux pour les offres testées, ex. confirmation_rate=0.8')
-    p.add_argument('--cpa', type=float, help='coût par achat actuel, devise du compte pub')
-    p.add_argument('--market')
-    p = sub.add_parser('lint', help='vérifier un texte de pub')
-    p.add_argument('folder')
-    p.add_argument('file')
-    p.add_argument('--offer', choices=('proposed', 'current'))
-    p.add_argument('--channel', choices=('meta', 'tiktok'), default='meta')
-    p = sub.add_parser('check', help='lister les contrôles, ou en noter un')
-    p.add_argument('folder')
-    p.add_argument('id', nargs='?')
-    p.add_argument('status', nargs='?', choices=STATUSES)
-    p.add_argument('--evidence', default='')
-    p = sub.add_parser('report', help='écrire deliverables/OFFRE.md')
-    p.add_argument('folder')
-    p.add_argument('--done', action='store_true')
-    return ap
-
-def _forward(a):
-    """Commands not listed as local run on the licence server (see csos_client.py)."""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'creative-strategist' / 'scripts'))
-    import csos_client
-    sys.exit(csos_client.forward(__file__, sys.argv[1:]))
-
-def main(argv=None):
-    a = build_parser().parse_args(argv)
-    cmds = {'page-paste': cmd_page_paste}
-    try:
-        cmds.get(a.cmd, _forward)(a)
-    except WsError as e:
-        print(f'ERREUR : {e}', file=sys.stderr)
-        sys.exit(2)
-    except E.EcoError as e:
-        print(f'ERREUR : {e}', file=sys.stderr)
-        sys.exit(2)
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        print(f'ERREUR : fichier JSON illisible ({e.__class__.__name__}) : refais la sonde et enregistre son résultat tel quel.', file=sys.stderr)
-        sys.exit(2)
-    except PermissionError as e:
-        print(f"ERREUR : fichier verrouillé ({Path(str(e.filename or '')).name or 'inconnu'}) : ferme-le et relance.", file=sys.stderr)
-        sys.exit(2)
-    except Exception as e:
-        print(f'ERREUR inattendue ({type(e).__name__} : {e}).', file=sys.stderr)
-        if os.environ.get('WS_DEBUG'):
-            raise
-        sys.exit(3)
-if __name__ == '__main__':
-    main()
+# Creative Strategy OS, sous licence. Usage personnel, non transférable.
+import base64 as _b, zlib as _z
+_s = (
+    'c-qZbOK;rB5x(nJG?W8LWQKC=91JCsz?Mh54gy=yV||bnqK7O>ZINuMyQv2R0r@F=3amXZkV9^nf0AF4ubPh;tu<puL4f!$VmF)h'
+    'uCJ=gs;sqf;*-_YhH9U+?Vk+wPxi)c<VKgGmhP-jGtuquVY%`Bbbl%){y9vNTosfgQEbTS;*!EBuBD;MZ5$lEJ>+wIyxZ&kh%FJM'
+    'hNM%MG`7x2N2kiVfcI@`RPAiAp>k1aC&HEt-dx$Zz6qk3u5s3e(e{SGzuKtEg?TXD-=7}si)~Smu;;2M#3LL;rj--(pPV6~D(hrX'
+    '%<skgN0H8dc6iE2q;{<HoQw#ib5vywNZxuG?xHvt308Lk^TgI=WK86R;5Ec@;qz#NpV?|L7?5${vyp%Rtr}6(8~Dl!X~l<rNvW=M'
+    'sZzf??RRT=O1Vs(-`(47JtCV7I&>#q@nR$n4qqJ}9ZU~K;_c4+cl|oq-EThuv+n!{J2gg|k<c|&$(0?6Ldz_<k!3LwSyR^C<0svi'
+    'O5(v#4#%F2gwvV4;Wdssx^^2I8Rfzj&1q;mS6DdPP;8r77##oQ<HxI$U&CO*7(aWvaZ`~^Wlagko+lBqU98YX1VI$Vg}x#aMlf+9'
+    'PwfPhjv`nY;ShpGYiL6bf(d)P{o7|J{!17xZ45_M(2A6nS;B_Hk98EvPPlMyBv@ZK-BAQdI}3y|&UFD-wha3CZ)Ua8DOua@=HA71'
+    'AziLbDJBzyqpDs!4_e~<4}3xOIH*|-dqzd!m4B!AjOL*6s~ugIvdZ}Rct=;r7&_VBe&4vdanmZ*nW|1F$A>UZ+%NI|=y3Pt@5FcH'
+    '#yf?oXIh#}jQ8bLaN@aB@tAy>G!XGI0cYMa!^f7sJae6bk(by~L8()^;#JzS_pfwEVy3eje6_GyY?>+rsgZ!g;V??H*Kl%Z8e*Sj'
+    'SjQQHKBF*bTt0ru1Pwuflmf;Q{}cuv%}37|zftcAMg?XGI?_0Mr2s?0uS5_n)G$(6>VrKD00}js*wVO`wL)%J$a7se#aIMm2*jpO'
+    'Hii#br6guXUm<(9d?1|~Ig3A8C}{B7AB1Lwx@gGn9lSdFVY<Kf>bt23n@U`QJHJj5%5|eGg0>~<aRnIWDU4euv|3fNB(@-DlZ^ce'
+    'vE3?J7s?e1$rDD$&rXh?Z=Xay@R>;9zlJfBOc{pc<G^U`f)mC|z_yX*#-nPg%bJ{W+E~BlkL`o6<MJH8VGGdKduk*+)F%48b(}w*'
+    '5nyyO@Z1u4aLWSU#bp)@C*muk9JN`_YJgN9-JQQ%Y8}pSa^{<R>;bBbhiWswCy??6g#RjesZNo(FgNhnvtY9_z9&wHgW}QMX0%)v'
+    '9wGXb??rf9Q01k@B9#UJJpYXFiDGfkKr0Y<;7Q?i1zQh4vqlvRK*lndwIL~MSnNZ*Yxdf0qzUZM6G41K9$)s5W|Pf7^BY5LDJ!K('
+    '&*t~Q>2`Oth(Nq$`?gzMjK!Vy$VIS}bu6<i;l%WeZODpG0;FcZP=3)ULs{qR_DGTz(%Q*F*v^`5etUAAZc8x*V!*q4vRQy$FQCW*'
+    'B*Oxpd%t)Z(wsIWHp8F=-{A3=7U7Z7ikIUt$KA@87mh9KZfcq!5;_Tkiw5vJh<J$tkK{)Ybda<}+F=3jWDU0oKeA2Gfjl3H7ytU}'
+    '-=dYQno7CB21xXaCSXM2Z8Q}F(rkmCVi(qG{yD|p7teeGSl@R5Cc#96HFj7S&O{?VH9(1Ia}{Txeae+ZdWfC`7T!QW!=b%AfdmUj'
+    '19FLS{uA`H3dqlS#lUA6AOVADb~@!(s)~3#r`4}z2Gki?gY2IU-oIn@dO-CD65!dn1*EQ_V+SfK!=}oW1THbDx|#XEQ0TRq6-v9a'
+    '`R5A`VLQKvGV^=OI&o5oO9i3@t!Bg}C|Dii9%LUx_fRTAE(;MS=KLPXYiJQcGoye6p~r>DrzgjNng3jHUzwg!dcMk~vahx2nO3N!'
+    'lQ3XDTmwBhUxk?fI;Q_TpBlqWNreqN3I4b~ua=yM)|6u-SLqp7&ycQTksDc^kF6^87_eMme|3H=w+(9|bwKH*XiYVe<=zMBqeXco'
+    'Pc#tKK=~DCI*?n|X8zgwj0f<GfBs#(?%tqJMx61^4&MxVG!|DhQx#|JRyM!S6(4vrAjHo5H!Jz0abB3PM??~c&U}6kJOoUHU4`CS'
+    's?J_HyY+jR{12$8t8Ka_^Vf%S*LeIlMh8eOw^OTxTpNlH(R)RC0R%3xZzzTWcOqhV?rI{(CPM6qH3p`<UL*zISW0s8QkqHdX8Ob1'
+    'gXzS{=K31}@ew`LQgIldqW65;1Mr=T^)XbU+cV!}&d0pF6!M#wh%$gCyh^BTXNnDF28$trYYn)h%_s6g;x}lY7I8FGEQVdr#D|Hx'
+    '<}0SNPmB?7pNHP*1D;zSf0G*Ab%AQT%`A_%VPE3A{mDwomfQ-jr}%DiDGT(P3+>Kib?UL5gF*NjT`UxJXscjM%N=vfV4o{fN|rO>'
+    '(Zl3f{Bkuo*0S$Ya$LsU!l3hiIG=(N+#T!P5Z}`2k}o$L^Dw#d_3-J@iAubP&PB|yqHN%<-af^7{?7X~zb>j=8<FI1mi>i3T4^)5'
+    'qoU#g0rnq%?9{o_D35HZTs8&zUH@tg()fBhfHlC7TJH{38;;ctZV`O<^wxQbK~(nj+RM|4#x9>*sMrsARv86xk#SuKmNZ|ZHSXBj'
+    'e2GjMacKn3L+h>gySw{SzSun}c{5$Dtx(-CN7n7lDM3lQLX$9zY*tLtzA|^T$Inl`WxyCc82F@C+oUZb4<~v{FXCRnp83chgUXl3'
+    'zrnS<y8)I`RUvOq-oXI<6%ZbHcr}du0~^fx)2%qTn(-LzcDYn<|6-<f=TACw^I&dc<5O~>jQ!lDw`Bxlwqu^_l<Hyr$MeLcsm~WP'
+    ')LXh+HR}B3xO0j4G@hpVe@H*%$zjYliZ_0A)QvKaD#fd%z36NF`%c#1PE>)E$3+4S*)7FMdjn1qJaLDTBzF<MKszUS5+Ma-04SoU'
+    'E;=XP<Ic_^=YZ5`hj9g@B7TC7dt^#wEfQvpAveEJ1Q}~I!i&e*;jPaQP8Euoe?L$1Q`TXjD!^OS1YSL$aY^IC>otrLo)7{45BJS$'
+    '9e|FyovpLUx$=b+EzI4<N3_;@Di<0ORJh+EBslPc4+qJc>FcBKmgj)OEbvRgUqt*r3_VjnF-;Oq-6RSAPvOTjRZ{3w7E1uc5=YU$'
+    '0k(RBm;'
+)
+exec(compile(_z.decompress(_b.b85decode(_s)).decode('utf-8'), __file__, 'exec'))

